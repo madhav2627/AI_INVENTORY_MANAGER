@@ -1,0 +1,9 @@
+{
+  "status": "insufficient_data",
+  "trained_at": "2026-07-14T11:38:44",
+  "reason": "Only 1 day(s) of sales history recorded so far.",
+  "rows_available": 1,
+  "distinct_days": 1,
+  "rows_needed": 40,
+  "days_needed": 14
+}

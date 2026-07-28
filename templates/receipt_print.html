@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Receipt {{ txn.invoice_no }}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<style>
+  body { background: #f8f6f1; }
+  [data-theme="dark"] body { background: #0c0e16; }
+  
+  .receipt-wrap {
+    max-width: 380px;
+    margin: 40px auto;
+    padding: 0 10px;
+  }
+  
+  /* Printer slit header representation */
+  .printer-slit {
+    width: 100%;
+    height: 10px;
+    background: #222;
+    border-radius: 6px 6px 0 0;
+    position: relative;
+    z-index: 5;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.8), 0 2px 8px rgba(0,0,0,0.3);
+    border-bottom: 2px solid #111;
+  }
+  
+  .receipt-container {
+    position: relative;
+    overflow: hidden;
+    margin-top: -2px;
+    border-radius: 0 0 8px 8px;
+    box-shadow: var(--shadow-card);
+  }
+
+  .receipt-paper {
+    position: relative;
+    border-radius: 0 0 8px 8px;
+    transition: transform 0.15s ease;
+  }
+  
+  .receipt-paper::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(135deg, #c9a56c 0%, #a07d47 50%, #8c6a38 100%);
+    opacity: 0.6;
+  }
+
+  /* Mechanical printing motor animation with motor jitter */
+  @keyframes printFeed {
+    0% {
+      transform: translateY(-92%);
+    }
+    3% { transform: translateY(-90%) translateX(0.5px); }
+    8% { transform: translateY(-84%) translateX(-0.5px); }
+    15% { transform: translateY(-75%) translateX(0.5px); }
+    22% { transform: translateY(-66%) translateX(-0.5px); }
+    30% { transform: translateY(-56%) translateX(0.5px); }
+    38% { transform: translateY(-47%) translateX(-0.5px); }
+    47% { transform: translateY(-37%) translateX(0.5px); }
+    57% { transform: translateY(-26%) translateX(-0.5px); }
+    68% { transform: translateY(-16%) translateX(0.5px); }
+    80% { transform: translateY(-8%) translateX(-0.5px); }
+    92% { transform: translateY(-2%) translateX(0.5px); }
+    100% {
+      transform: translateY(0);
+    }
+  }
+
+  /* Standard page entrance */
+  .receipt-entrance {
+    animation: printFeed 1.8s cubic-bezier(0.25, 1, 0.5, 1) both;
+  }
+</style>
+</head>
+<body>
+<div class="receipt-wrap">
+  <!-- Printer top slot view -->
+  <div class="printer-slit no-print"></div>
+  
+  <div class="receipt-container">
+    <div class="receipt-paper receipt-entrance">
+      <h2>{{ settings.business_name }}</h2>
+      {% if settings.business_address %}<div class="r-center">{{ settings.business_address }}</div>{% endif %}
+      {% if settings.business_phone %}<div class="r-center">{{ settings.business_phone }}</div>{% endif %}
+
+      <div class="receipt-divider"></div>
+      <div class="receipt-line"><span>Invoice</span><span>{{ txn.invoice_no }}</span></div>
+      <div class="receipt-line"><span>Date</span><span>{{ txn.created_at.replace('T', ' ') }}</span></div>
+      <div class="receipt-line"><span>Payment</span><span>{{ txn.payment_method }}</span></div>
+      <div class="receipt-divider"></div>
+
+      {% for item in items %}
+      <div class="receipt-line">
+        <span>{{ item.product_name }} &times;{{ item.quantity|round(2) }}</span>
+        <span>{{ settings.currency_symbol }}{{ "%.2f"|format(item.line_total) }}</span>
+      </div>
+      {% endfor %}
+
+      <div class="receipt-divider"></div>
+      <div class="receipt-line"><span>Subtotal</span><span>{{ settings.currency_symbol }}{{ "%.2f"|format(txn.subtotal) }}</span></div>
+      {% if txn.discount %}
+      <div class="receipt-line"><span>Discount</span><span>-{{ settings.currency_symbol }}{{ "%.2f"|format(txn.discount) }}</span></div>
+      {% endif %}
+      <div class="receipt-line"><span>Tax</span><span>{{ settings.currency_symbol }}{{ "%.2f"|format(txn.tax) }}</span></div>
+      <div class="receipt-divider"></div>
+      <div class="receipt-line receipt-total"><span>Total</span><span>{{ settings.currency_symbol }}{{ "%.2f"|format(txn.total) }}</span></div>
+
+      <div class="receipt-divider"></div>
+      <div class="r-center" style="margin-top:4px;">Thank you for shopping with us.</div>
+    </div>
+  </div>
+
+  <div class="no-print" style="text-align:center; margin-top:20px; display:flex; gap:10px; justify-content:center;">
+    <button class="btn btn-primary" id="print-trigger-btn" onclick="executePhysicalPrint()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 6 2 18 2 18 9"/>
+        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+        <path d="M6 18H4a2 2 0 0 1-2-2V9"/>
+        <rect x="6" y="14" width="12" height="8"/>
+      </svg>
+      Print receipt
+    </button>
+    <a href="{{ url_for('billing') }}" class="btn btn-ghost">Back to billing</a>
+  </div>
+</div>
+
+<script>
+  function executePhysicalPrint() {
+    const paper = document.querySelector('.receipt-paper');
+    const btn = document.getElementById('print-trigger-btn');
+    
+    if (paper && btn) {
+      btn.disabled = true;
+      btn.innerHTML = "Printing...";
+      
+      // 1. Play offline mechanical printer motor sound (square oscillator hum)
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(85, audioCtx.currentTime); // Low mechanical motor sound
+        gain.gain.setValueAtTime(0.03, audioCtx.currentTime); // Low non-intrusive volume
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.start();
+        osc.stop(audioCtx.currentTime + 1.8); // Matches the 1.8s feed animation exactly
+      } catch(e) {
+        console.warn("Audio feedback unsupported", e);
+      }
+      
+      // 2. Trigger mechanical paper slide animation
+      paper.classList.remove('receipt-entrance');
+      paper.offsetHeight; // reflow trigger
+      paper.style.animation = 'printFeed 1.8s steps(35) forwards';
+      
+      // 3. Launch system print prompt after feed animation completes
+      setTimeout(() => {
+        window.print();
+        btn.disabled = false;
+        btn.innerHTML = `
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 6 2 18 2 18 9"/>
+            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+            <rect x="6" y="14" width="12" height="8"/>
+          </svg> Print receipt`;
+      }, 1900);
+    }
+  }
+</script>
+</body>
+</html>

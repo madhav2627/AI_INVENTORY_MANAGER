@@ -1,0 +1,820 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit item' if product else 'Add item' }}{% endblock %}
+
+{% block head %}
+<style>
+/* ── Add Item Premium Styles ──────────────────────────────────────── */
+.scanner-btn-row { display:flex; gap:8px; flex-wrap:wrap; }
+.product-image-card {
+  width:100%; aspect-ratio:1/1; max-width:160px;
+  border-radius:14px; border:2px dashed var(--border);
+  background:var(--surface-2); display:flex; align-items:center;
+  justify-content:center; overflow:hidden; position:relative;
+  cursor:pointer; transition:border-color .2s;
+}
+.product-image-card:hover { border-color:var(--accent); }
+.product-image-card img { width:100%; height:100%; object-fit:cover; border-radius:12px; }
+.product-image-card .img-placeholder { color:var(--muted); font-size:12px; text-align:center; padding:12px; }
+.img-replace-hint { font-size:11px; color:var(--muted); margin-top:4px; }
+
+/* Skeleton loader */
+.skeleton { background:linear-gradient(90deg, var(--surface-2) 25%, var(--border) 50%, var(--surface-2) 75%);
+  background-size:200% 100%; animation:shimmer 1.4s infinite; border-radius:6px; }
+@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+.skeleton-field { height:38px; margin-bottom:12px; }
+.skeleton-label { height:14px; width:40%; margin-bottom:6px; }
+
+/* Accordion groups */
+.field-group { border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; }
+.field-group-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:12px 16px; background:var(--surface-2); cursor:pointer;
+  font-weight:600; font-size:13px; user-select:none;
+  transition:background .15s;
+}
+.field-group-header:hover { background:var(--border); }
+.field-group-header .fgh-icon { font-size:11px; transition:transform .25s; }
+.field-group-header.is-open .fgh-icon { transform:rotate(180deg); }
+.field-group-body { padding:16px; display:none; }
+.field-group-body.is-open { display:block; }
+
+/* Expiry badge */
+.expiry-badge {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:3px 10px; border-radius:20px; font-size:11px;
+  font-weight:600; margin-top:4px;
+}
+.expiry-badge.fresh    { background:#d1fae5; color:#065f46; }
+.expiry-badge.near     { background:#fef3c7; color:#92400e; }
+.expiry-badge.expired  { background:#fee2e2; color:#991b1b; }
+[data-theme="dark"] .expiry-badge.fresh   { background:#064e3b; color:#6ee7b7; }
+[data-theme="dark"] .expiry-badge.near    { background:#451a03; color:#fcd34d; }
+[data-theme="dark"] .expiry-badge.expired { background:#450a0a; color:#fca5a5; }
+
+/* Scan history */
+.scan-history-list { list-style:none; padding:0; margin:0; }
+.scan-history-item {
+  display:flex; align-items:center; gap:8px; padding:6px 0;
+  border-bottom:1px solid var(--border); font-size:12px; color:var(--muted);
+}
+.scan-history-item:last-child { border-bottom:none; }
+
+/* Scanner overlay enhancements */
+.scan-line {
+  position:absolute; left:0; right:0; top:50%;
+  height:2px; background:linear-gradient(90deg,transparent,var(--accent),transparent);
+  animation:scanMove 2s linear infinite;
+  box-shadow: 0 0 8px var(--accent);
+}
+@keyframes scanMove { 0%{top:20%} 50%{top:80%} 100%{top:20%} }
+.format-badges { display:flex; flex-wrap:wrap; gap:4px; padding:8px 0; justify-content:center; }
+.format-badge { background:rgba(255,255,255,.12); color:#fff; border-radius:4px; font-size:9px; padding:2px 5px; }
+.scanner-counter { font-size:11px; color:var(--muted); text-align:center; margin-top:4px; }
+.scan-ok-badge { background:#22c55e; color:#fff; border-radius:4px; padding:1px 6px; font-size:11px; }
+
+/* Source badge */
+.source-tag { font-size:10px; padding:2px 7px; border-radius:10px; background:var(--surface-2); color:var(--muted); border:1px solid var(--border); }
+
+/* Duplicate modal */
+.dup-modal-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:9999;
+  display:none; align-items:center; justify-content:center;
+}
+.dup-modal-overlay.is-open { display:flex; }
+.dup-modal-box {
+  background:var(--surface); border-radius:20px; padding:28px 32px;
+  max-width:400px; width:90%; box-shadow:0 24px 80px rgba(0,0,0,.4);
+  animation:popIn .25s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes popIn { from{opacity:0;transform:scale(.85)} to{opacity:1;transform:scale(1)} }
+.dup-modal-icon { font-size:36px; text-align:center; margin-bottom:12px; }
+.dup-modal-title { font-size:17px; font-weight:700; text-align:center; margin-bottom:8px; }
+.dup-modal-sub { font-size:13px; color:var(--muted); text-align:center; margin-bottom:20px; }
+.dup-modal-actions { display:flex; gap:10px; }
+.dup-modal-actions button { flex:1; padding:10px; border-radius:10px; font-weight:600; font-size:14px; border:none; cursor:pointer; }
+.dup-btn-yes { background:var(--accent); color:#fff; }
+.dup-btn-no  { background:var(--surface-2); color:var(--text); }
+.dup-btn-yes:hover { opacity:.9; }
+
+/* OCR trigger */
+.ocr-btn { background:none; border:1px dashed var(--border); color:var(--muted); border-radius:8px; padding:5px 10px; font-size:11px; cursor:pointer; }
+.ocr-btn:hover { border-color:var(--accent); color:var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <span class="eyebrow">Inventory</span>
+    <h1>{{ 'Edit item' if product else 'Add a new item' }}</h1>
+    <p>Scan a barcode to auto-fill all details, or enter them manually.</p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    {% if not product %}
+    <a href="{{ url_for('scanner_page') }}" class="btn btn-brass">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="5"/><rect x="16" y="3" width="5" height="5"/><rect x="3" y="16" width="5" height="5"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>
+      Fast Scanner
+    </a>
+    {% endif %}
+    <a href="{{ url_for('inventory') }}" class="btn btn-ghost">← Back</a>
+  </div>
+</div>
+
+<!-- ── Scan History (session) ──────────────────────────────────────────── -->
+<div id="scan-history-panel" style="display:none;" class="card" style="max-width:720px;margin-bottom:12px;">
+  <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px;">📋 Recent Scans This Session</div>
+  <ul class="scan-history-list" id="scan-history-list"></ul>
+</div>
+
+<!-- ── Loading Skeleton ───────────────────────────────────────────────── -->
+<div id="product-skeleton" style="display:none;" class="card" style="max-width:720px;">
+  <div style="display:flex;gap:16px;align-items:flex-start;margin-bottom:16px;">
+    <div class="skeleton" style="width:80px;height:80px;border-radius:12px;flex-shrink:0;"></div>
+    <div style="flex:1;">
+      <div class="skeleton skeleton-label" style="width:60%;"></div>
+      <div class="skeleton skeleton-field"></div>
+      <div class="skeleton skeleton-label" style="width:40%;margin-top:8px;"></div>
+      <div class="skeleton skeleton-field"></div>
+    </div>
+  </div>
+  <div class="skeleton skeleton-label"></div>
+  <div class="skeleton skeleton-field"></div>
+  <div class="skeleton skeleton-label" style="margin-top:8px;"></div>
+  <div class="skeleton skeleton-field"></div>
+  <div style="margin-top:8px;text-align:center;color:var(--muted);font-size:12px;">
+    🔍 Searching product databases…
+  </div>
+</div>
+
+<!-- ── Main Form ──────────────────────────────────────────────────────── -->
+<div class="card" id="product-form-card" style="max-width:720px;">
+  <form method="post" id="product-form">
+
+    <!-- Product image + source indicator -->
+    <div style="display:flex;gap:16px;align-items:flex-start;margin-bottom:20px;">
+      <div>
+        <div class="product-image-card" id="product-image-card" onclick="document.getElementById('image-url-input').focus();" title="Click to edit image URL">
+          <div class="img-placeholder" id="img-placeholder">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            <div style="margin-top:6px;">No image</div>
+          </div>
+          <img id="product-image-preview" src="" alt="Product" style="display:none;">
+        </div>
+        <div class="img-replace-hint" style="text-align:center;">Paste URL below</div>
+      </div>
+      <div style="flex:1;">
+        <div id="source-info" style="display:none;margin-bottom:10px;">
+          <span class="source-tag" id="source-tag-text">AI Model</span>
+          <span id="cache-tag" style="display:none;" class="source-tag" style="margin-left:4px;">📦 Cached</span>
+        </div>
+        <div class="form-field" style="margin-bottom:0;">
+          <label>Item name <span style="color:var(--danger)">*</span></label>
+          <input type="text" id="item-name" name="name" required value="{{ product.name if product else '' }}" placeholder="Enter product name…">
+        </div>
+        <div class="form-field" style="margin-top:10px;margin-bottom:0;">
+          <label>Brand</label>
+          <input type="text" id="item-brand" name="brand" value="{{ product.brand if product else '' }}" placeholder="Brand name…">
+        </div>
+      </div>
+    </div>
+
+    <!-- Barcode scanner row -->
+    <div class="form-field">
+      <label>Barcode / QR value</label>
+      <div class="scanner-btn-row">
+        <input type="text" class="mono-input" id="code-input" name="code_value"
+          value="{{ product.code_value if product else '' }}"
+          placeholder="Scan or type a barcode…" style="flex:1;">
+        <button type="button" class="btn btn-brass" id="open-camera-btn" title="Open camera scanner">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Scan
+        </button>
+        <button type="button" class="btn btn-primary" id="ai-autofill-btn" title="AI lookup from barcode">
+          🤖 AI Lookup
+        </button>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+        <span class="hint" style="margin:0;">Leave blank to assign later.</span>
+        <span id="barcode-validation-badge" class="badge" style="display:none;padding:2px 8px;font-size:10px;"></span>
+      </div>
+    </div>
+
+    <input type="hidden" name="barcode_raw" id="barcode-raw-input" value="{{ product.barcode_raw if product else '' }}">
+    <input type="hidden" name="source_db" id="source-db-input" value="{{ product.source_db if product else '' }}">
+
+    <div class="form-grid">
+      <div class="form-field">
+        <label>Category</label>
+        <input type="text" id="item-category" name="category" value="{{ product.category if product else 'General' }}" placeholder="Electronics, Food, etc.">
+      </div>
+      <div class="form-field">
+        <label>Sub-category</label>
+        <input type="text" id="item-sub-category" name="sub_category" value="{{ product.sub_category if product else '' }}" placeholder="Optional sub-category">
+      </div>
+      <div class="form-field">
+        <label>Code type</label>
+        <select id="item-code-type" name="code_type">
+          {% for t in ['CODE128','EAN13','QR','EAN8','UPC_A','UPC_E','CODE39','ITF'] %}
+          <option value="{{ t }}" {{ 'selected' if product and product.code_type == t }}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Unit label</label>
+        <input type="text" id="item-unit" name="unit_label" value="{{ product.unit_label if product else 'pcs' }}" placeholder="pcs, kg, ltr, ml…">
+      </div>
+    </div>
+
+    <!-- ── Group 1: Pricing ──────────────────────────────────────── -->
+    <div class="field-group">
+      <div class="field-group-header is-open" data-target="group-pricing">
+        💰 Pricing
+        <span class="fgh-icon">▼</span>
+      </div>
+      <div class="field-group-body is-open" id="group-pricing">
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Selling price <span style="color:var(--danger)">*</span></label>
+            <input type="number" step="0.01" id="item-price" name="unit_price" required value="{{ product.unit_price if product else '' }}">
+          </div>
+          <div class="form-field">
+            <label>Cost price</label>
+            <input type="number" step="0.01" id="item-cost" name="cost_price" value="{{ product.cost_price if product else '' }}">
+          </div>
+          <div class="form-field">
+            <label>MRP</label>
+            <input type="number" step="0.01" id="item-mrp" name="mrp" value="{{ product.mrp if product else '' }}" placeholder="Maximum Retail Price">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Group 2: Stock ────────────────────────────────────────── -->
+    <div class="field-group">
+      <div class="field-group-header is-open" data-target="group-stock">
+        📦 Stock
+        <span class="fgh-icon">▼</span>
+      </div>
+      <div class="field-group-body is-open" id="group-stock">
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Current stock <span style="color:var(--danger)">*</span></label>
+            <input type="number" step="0.01" id="item-stock" name="stock_qty" required value="{{ product.stock_qty if product else '' }}">
+          </div>
+          <div class="form-field">
+            <label>Reorder level</label>
+            <input type="number" step="0.01" id="item-reorder" name="reorder_level" value="{{ product.reorder_level if product else 5 }}">
+            <span class="hint">Alert when stock falls to this level.</span>
+          </div>
+          <div class="form-field">
+            <label>Image URL</label>
+            <input type="url" id="image-url-input" name="image_url" value="{{ product.image_url if product else '' }}" placeholder="https://…" oninput="previewImageUrl(this.value)">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Group 3: Product Details ──────────────────────────────── -->
+    <div class="field-group">
+      <div class="field-group-header" data-target="group-details">
+        🏷️ Product Details
+        <span class="fgh-icon">▼</span>
+      </div>
+      <div class="field-group-body" id="group-details">
+        <div class="form-field full">
+          <label>Description</label>
+          <textarea name="description" id="item-description" rows="2" placeholder="Product description…" style="width:100%;resize:vertical;">{{ product.description if product else '' }}</textarea>
+        </div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Weight</label>
+            <input type="text" id="item-weight" name="weight" value="{{ product.weight if product else '' }}" placeholder="e.g. 500g, 1kg">
+          </div>
+          <div class="form-field">
+            <label>Volume</label>
+            <input type="text" id="item-volume" name="volume" value="{{ product.volume if product else '' }}" placeholder="e.g. 500ml, 1L">
+          </div>
+          <div class="form-field">
+            <label>Dimensions</label>
+            <input type="text" id="item-dimensions" name="dimensions" value="{{ product.dimensions if product else '' }}" placeholder="L x W x H">
+          </div>
+          <div class="form-field">
+            <label>Color</label>
+            <input type="text" id="item-color" name="color" value="{{ product.color if product else '' }}" placeholder="Red, Blue…">
+          </div>
+          <div class="form-field">
+            <label>Size</label>
+            <input type="text" id="item-size" name="size_label" value="{{ product.size_label if product else '' }}" placeholder="S, M, L, XL…">
+          </div>
+          <div class="form-field">
+            <label>Warranty</label>
+            <input type="text" id="item-warranty" name="warranty_info" value="{{ product.warranty_info if product else '' }}" placeholder="1 Year, 6 Months…">
+          </div>
+          <div class="form-field">
+            <label>Manufacturer</label>
+            <input type="text" id="item-manufacturer" name="manufacturer" value="{{ product.manufacturer if product else '' }}" placeholder="Company name">
+          </div>
+          <div class="form-field">
+            <label>Country of origin</label>
+            <input type="text" id="item-country" name="country_of_origin" value="{{ product.country_of_origin if product else '' }}" placeholder="India, USA…">
+          </div>
+          <div class="form-field">
+            <label>Supplier details</label>
+            <input type="text" id="item-supplier" name="supplier_details" value="{{ product.supplier_details if product else '' }}" placeholder="Supplier name / contact">
+          </div>
+        </div>
+        <div class="form-field full">
+          <label>Ingredients</label>
+          <textarea name="ingredients" id="item-ingredients" rows="2" placeholder="Ingredients list…" style="width:100%;resize:vertical;">{{ product.ingredients if product else '' }}</textarea>
+        </div>
+        <div class="form-field full">
+          <label>Nutritional information</label>
+          <textarea name="nutritional_info" id="item-nutrition" rows="2" placeholder="Per 100g: Calories, Protein, Carbs, Fat…" style="width:100%;resize:vertical;">{{ product.nutritional_info if product else '' }}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Group 4: Expiry & Batch ────────────────────────────────── -->
+    <div class="field-group">
+      <div class="field-group-header" data-target="group-expiry">
+        📅 Expiry, Dates & Batch
+        <span class="fgh-icon">▼</span>
+      </div>
+      <div class="field-group-body" id="group-expiry">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:12px;color:var(--muted);">
+          <span>📷 Auto-read from label:</span>
+          <button type="button" class="ocr-btn" id="ocr-read-btn">Read with OCR</button>
+          <span id="ocr-status" style="font-size:11px;"></span>
+        </div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Expiry date</label>
+            <input type="date" id="item-expiry" name="expiry_date" value="{{ product.expiry_date if product else '' }}" oninput="updateExpiryBadge(this.value)">
+            <div id="expiry-badge-container" style="margin-top:4px;"></div>
+          </div>
+          <div class="form-field">
+            <label>Manufacturing date</label>
+            <input type="date" id="item-mfg-date" name="mfg_date" value="{{ product.mfg_date if product else '' }}">
+          </div>
+          <div class="form-field">
+            <label>Batch number</label>
+            <input type="text" id="item-batch" name="batch_number" value="{{ product.batch_number if product else '' }}" placeholder="e.g. B2024-001">
+          </div>
+          <div class="form-field">
+            <label>Serial number</label>
+            <input type="text" id="item-serial" name="serial_number" value="{{ product.serial_number if product else '' }}" placeholder="Serial / lot number">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Form Actions ──────────────────────────────────────────── -->
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary" id="save-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        {{ 'Save changes' if product else 'Add to inventory' }}
+      </button>
+      <a href="{{ url_for('inventory') }}" class="btn btn-ghost">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<!-- ── Camera Modal ────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="camera-modal">
+  <div class="modal-box" style="max-width:440px;">
+    <div class="modal-head">
+      <div>
+        <h3 style="margin:0;font-size:15px;">📷 Smart Barcode Scanner</h3>
+        <div class="format-badges">
+          <span class="format-badge">EAN-13</span><span class="format-badge">EAN-8</span>
+          <span class="format-badge">UPC-A</span><span class="format-badge">UPC-E</span>
+          <span class="format-badge">CODE-128</span><span class="format-badge">CODE-39</span>
+          <span class="format-badge">QR</span><span class="format-badge">ITF</span>
+        </div>
+      </div>
+      <button id="close-camera-btn" style="font-size:20px;">&times;</button>
+    </div>
+    <div id="scanner-viewport" style="position:relative;">
+      <div id="scan-line" class="scan-line" style="display:none;"></div>
+    </div>
+    <div class="scan-status" id="scan-status">Point the camera at the item's barcode.</div>
+    <div class="scanner-counter" id="scanner-session-count" style="display:none;"></div>
+  </div>
+</div>
+
+<!-- ── Duplicate Guard Modal ───────────────────────────────────────── -->
+<div class="dup-modal-overlay" id="dup-modal">
+  <div class="dup-modal-box">
+    <div class="dup-modal-icon">📦</div>
+    <div class="dup-modal-title">Product already exists!</div>
+    <div class="dup-modal-sub" id="dup-modal-sub">This barcode is linked to <strong id="dup-product-name">...</strong> (Stock: <span id="dup-stock">0</span>). Increase stock instead?</div>
+    <div class="dup-modal-actions">
+      <button class="dup-btn-yes" id="dup-yes-btn">✅ Yes, add stock</button>
+      <button class="dup-btn-no" id="dup-no-btn">✏️ Edit manually</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/html5-qrcode.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scanner.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scanner_advanced.js') }}"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let currentDupId = null;
+  let scanSessionCount = 0;
+  const scanHistory = [];
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function el(id) { return document.getElementById(id); }
+
+  function flashInput(el) {
+    if (!el) return;
+    el.style.transition = "none";
+    el.style.backgroundColor = "var(--brass-glow, rgba(212,175,55,.15))";
+    el.style.borderColor = "var(--brass, #d4af37)";
+    void el.offsetWidth;
+    el.style.transition = "all 1.2s ease";
+    el.style.backgroundColor = "";
+    el.style.borderColor = "";
+  }
+
+  function showToast(msg, type) {
+    let toast = el("ai-toast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "ai-toast";
+      toast.className = "toast";
+      document.body.appendChild(toast);
+    }
+    toast.innerHTML = msg;
+    toast.classList.remove("toast-error", "toast-success");
+    if (type) toast.classList.add("toast-" + type);
+    toast.classList.add("is-visible");
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => toast.classList.remove("is-visible"), 5000);
+  }
+
+  function setLoading(on) {
+    el("product-skeleton").style.display = on ? "block" : "none";
+    el("product-form-card").style.display = on ? "none" : "block";
+  }
+
+  // ── Expiry badge ─────────────────────────────────────────────────────────
+  window.updateExpiryBadge = function (val) {
+    const container = el("expiry-badge-container");
+    if (!container) return;
+    if (!val) { container.innerHTML = ""; return; }
+    const today = new Date();
+    const expiry = new Date(val);
+    const days = Math.round((expiry - today) / 864e5);
+    let cls, label;
+    if (days < 0) {
+      cls = "expired"; label = `⛔ Expired ${Math.abs(days)}d ago`;
+    } else if (days <= 30) {
+      cls = "near"; label = `⚠️ Expires in ${days} day${days !== 1 ? "s" : ""}`;
+    } else {
+      cls = "fresh"; label = `✅ Fresh · ${days} days remaining`;
+    }
+    container.innerHTML = `<span class="expiry-badge ${cls}">${label}</span>`;
+  };
+
+  // ── Image preview ─────────────────────────────────────────────────────────
+  window.previewImageUrl = function (url) {
+    const preview = el("product-image-preview");
+    const placeholder = el("img-placeholder");
+    if (!url || !url.startsWith("http")) {
+      if (preview) preview.style.display = "none";
+      if (placeholder) placeholder.style.display = "";
+      return;
+    }
+    // Use proxy to load image
+    const proxyUrl = `/inventory/image_proxy?url=${encodeURIComponent(url)}`;
+    if (preview) {
+      preview.src = proxyUrl;
+      preview.style.display = "block";
+      preview.onerror = () => {
+        // Direct load fallback
+        preview.src = url;
+        preview.onerror = () => {
+          preview.style.display = "none";
+          if (placeholder) placeholder.style.display = "";
+        };
+      };
+      if (placeholder) placeholder.style.display = "none";
+    }
+  };
+
+  // ── Fill form from lookup data ────────────────────────────────────────────
+  function fillForm(data) {
+    const map = {
+      "item-name":         data.name,
+      "item-brand":        data.brand,
+      "item-category":     data.category,
+      "item-sub-category": data.sub_category,
+      "item-description":  data.description,
+      "item-unit":         data.unit_label,
+      "item-price":        data.unit_price || "",
+      "item-cost":         data.cost_price || "",
+      "item-mrp":          data.mrp || "",
+      "item-stock":        (data.stock_qty !== undefined && data.stock_qty !== null) ? data.stock_qty : "",
+      "item-reorder":      data.reorder_level || "",
+      "item-weight":       data.weight,
+      "item-volume":       data.volume,
+      "item-dimensions":   data.dimensions,
+      "item-color":        data.color,
+      "item-size":         data.size_label,
+      "item-warranty":     data.warranty_info,
+      "item-manufacturer": data.manufacturer,
+      "item-country":      data.country_of_origin,
+      "item-supplier":     data.supplier_details,
+      "item-ingredients":  data.ingredients,
+      "item-nutrition":    data.nutritional_info,
+      "item-expiry":       data.expiry_date,
+      "item-mfg-date":     data.mfg_date,
+      "item-batch":        data.batch_number,
+      "item-serial":       data.serial_number,
+      "image-url-input":   data.image_url,
+      "barcode-raw-input": data.barcode_raw || data.code_value || "",
+      "source-db-input":   data.source_db || "",
+    };
+
+    for (const [id, value] of Object.entries(map)) {
+      const elem = el(id);
+      if (elem && value) {
+        elem.value = value;
+        flashInput(elem);
+      }
+    }
+
+    // Image preview
+    if (data.image_url) previewImageUrl(data.image_url);
+
+    // Expiry badge
+    if (data.expiry_date) updateExpiryBadge(data.expiry_date);
+
+    // Source tag
+    if (data.source_db) {
+      const si = el("source-info");
+      const st = el("source-tag-text");
+      if (si && st) { st.textContent = data.source_db; si.style.display = "block"; }
+    }
+    if (data._from_cache) {
+      const ct = el("cache-tag");
+      if (ct) ct.style.display = "inline-block";
+    }
+
+    // Open groups that have data
+    if (data.expiry_date || data.batch_number) {
+      openGroup("group-expiry");
+    }
+    if (data.description || data.ingredients) {
+      openGroup("group-details");
+    }
+  }
+
+  // ── Scan history ──────────────────────────────────────────────────────────
+  function addToHistory(code, name) {
+    scanHistory.unshift({ code, name, time: new Date().toLocaleTimeString() });
+    if (scanHistory.length > 5) scanHistory.pop();
+
+    const panel = el("scan-history-panel");
+    const list  = el("scan-history-list");
+    if (!panel || !list) return;
+    panel.style.display = "block";
+    list.innerHTML = scanHistory.map(s =>
+      `<li class="scan-history-item">
+        <span class="mono-input" style="font-size:11px;padding:2px 6px;">${s.code}</span>
+        <span>${s.name || "Unknown product"}</span>
+        <span style="margin-left:auto;">${s.time}</span>
+      </li>`
+    ).join("");
+  }
+
+  // ── Duplicate Guard ───────────────────────────────────────────────────────
+  function showDuplicate(data) {
+    currentDupId = data._existing_id;
+    const nameEl   = el("dup-product-name");
+    const stockEl  = el("dup-stock");
+    if (nameEl)  nameEl.textContent  = data._existing_name;
+    if (stockEl) stockEl.textContent = data._existing_stock;
+    const modal = el("dup-modal");
+    if (modal) modal.classList.add("is-open");
+  }
+
+  function closeDupModal() {
+    const modal = el("dup-modal");
+    if (modal) modal.classList.remove("is-open");
+    currentDupId = null;
+  }
+
+  const dupYes = el("dup-yes-btn");
+  const dupNo  = el("dup-no-btn");
+
+  if (dupYes) {
+    dupYes.addEventListener("click", () => {
+      if (!currentDupId) return;
+      const qty = parseFloat(prompt("How many units to add?", "1") || "0");
+      if (qty <= 0) { closeDupModal(); return; }
+      fetch(`/inventory/stock_increase/${currentDupId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ qty }),
+      })
+      .then(r => r.json())
+      .then(d => {
+        closeDupModal();
+        showToast(`✅ Stock updated: <strong>${d.name}</strong> now has <strong>${d.new_stock}</strong> units.`, "success");
+      })
+      .catch(() => showToast("❌ Failed to update stock.", "error"));
+    });
+  }
+  if (dupNo) {
+    dupNo.addEventListener("click", () => closeDupModal());
+  }
+
+  // ── Main lookup function ──────────────────────────────────────────────────
+  function lookupBarcode(code, force) {
+    if (!code) return;
+    const nameEl = el("item-name");
+    if (!force && nameEl && nameEl.value.trim() !== "") return;
+    if (force && nameEl && nameEl.value.trim() !== "") {
+      if (!confirm("Overwrite current fields with scanned product data?")) return;
+    }
+
+    setLoading(true);
+
+    fetch(`/inventory/barcode_lookup?code=${encodeURIComponent(code)}`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => {
+        setLoading(false);
+
+        if (data._duplicate) {
+          showDuplicate(data);
+          return;
+        }
+
+        fillForm(data);
+        addToHistory(code, data.name);
+        scanSessionCount++;
+
+        const countEl = el("scanner-session-count");
+        if (countEl) { countEl.textContent = `Session: ${scanSessionCount} scan${scanSessionCount !== 1 ? "s" : ""}`; countEl.style.display = "block"; }
+
+        if (data._found) {
+          showToast(`🤖 Auto-filled: <strong>${data.name}</strong> <span style="opacity:.7;font-size:11px;">via ${data.source_db || "AI"}</span>`, "success");
+        } else {
+          showToast(`⚠️ No product found for <code>${code}</code>. Please fill details manually.`);
+        }
+      })
+      .catch(() => {
+        setLoading(false);
+        showToast("⚠️ Lookup failed. Check internet or fill manually.");
+      });
+  }
+
+  // ── Scanner result callback ───────────────────────────────────────────────
+  window.SCANNER_ON_RESULT = function (code) {
+    const input = el("code-input");
+    if (input) {
+      input.value = code;
+      updateValidationBadge(code);
+    }
+    el("barcode-raw-input").value = code;
+    lookupBarcode(code, false);
+  };
+
+  // ── AI Lookup button ──────────────────────────────────────────────────────
+  const aiBtn = el("ai-autofill-btn");
+  if (aiBtn) {
+    aiBtn.addEventListener("click", () => {
+      const val = el("code-input").value.trim();
+      if (!val) { showToast("Please scan or type a barcode value first."); return; }
+      lookupBarcode(val, true);
+    });
+  }
+
+  // ── Manual code input ─────────────────────────────────────────────────────
+  const codeInput = el("code-input");
+  if (codeInput) {
+    codeInput.addEventListener("input", () => updateValidationBadge(codeInput.value.trim()));
+    codeInput.addEventListener("change", () => lookupBarcode(codeInput.value.trim(), false));
+    codeInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); lookupBarcode(codeInput.value.trim(), false); }
+    });
+    updateValidationBadge(codeInput.value.trim());
+  }
+
+  // ── Barcode validation badge ──────────────────────────────────────────────
+  function validateEanBarcode(code) {
+    code = String(code).trim();
+    if (!/^\d+$/.test(code)) return { valid: false, label: "QR/Custom" };
+    if (code.length !== 8 && code.length !== 12 && code.length !== 13)
+      return { valid: false, label: "Invalid length" };
+    let sum = 0;
+    const len = code.length;
+    const check = parseInt(code[len - 1]);
+    for (let i = 0; i < len - 1; i++) {
+      sum += parseInt(code[i]) * (((len - 1 - i) % 2 === 1) ? 3 : 1);
+    }
+    const calc = (10 - (sum % 10)) % 10;
+    if (calc === check) {
+      return { valid: true, label: len === 13 ? "EAN-13 ✓" : (len === 12 ? "UPC-A ✓" : "EAN-8 ✓") };
+    }
+    return { valid: false, label: "Bad checksum" };
+  }
+
+  function updateValidationBadge(val) {
+    const badge = el("barcode-validation-badge");
+    if (!badge) return;
+    if (!val) { badge.style.display = "none"; return; }
+    const res = validateEanBarcode(val);
+    badge.style.display = "inline-block";
+    badge.textContent = res.label;
+    badge.className = "badge " + (res.valid ? "badge-ok" : (res.label === "QR/Custom" ? "badge-neutral" : "badge-danger"));
+  }
+
+  // ── OCR button ────────────────────────────────────────────────────────────
+  const ocrBtn = el("ocr-read-btn");
+  if (ocrBtn) {
+    ocrBtn.addEventListener("click", async () => {
+      const statusEl = el("ocr-status");
+      if (statusEl) statusEl.textContent = "📷 Reading label…";
+      ocrBtn.disabled = true;
+
+      // Open scanner, let user point at label
+      openScanner({
+        onResult: async (code) => {
+          // code from camera — already handled by SCANNER_ON_RESULT
+        },
+      });
+
+      // Wait 2 seconds then try OCR on the video frame
+      setTimeout(async () => {
+        try {
+          const ocrResult = await ScannerOCR.readFromActiveCamera();
+          closeScanner();
+          ocrBtn.disabled = false;
+
+          if (!ocrResult) { if (statusEl) statusEl.textContent = "No result."; return; }
+
+          let filled = 0;
+          const fieldMap = {
+            "item-expiry":   ocrResult.expiry_date,
+            "item-mfg-date": ocrResult.mfg_date,
+            "item-batch":    ocrResult.batch_number,
+            "item-serial":   ocrResult.serial_number,
+          };
+          for (const [id, val] of Object.entries(fieldMap)) {
+            if (val) {
+              const elem = el(id);
+              if (elem) { elem.value = val; flashInput(elem); filled++; }
+            }
+          }
+          if (ocrResult.expiry_date) updateExpiryBadge(ocrResult.expiry_date);
+          if (statusEl) statusEl.textContent = filled > 0 ? `✅ Read ${filled} field${filled > 1 ? "s" : ""}` : "Nothing detected.";
+          openGroup("group-expiry");
+        } catch (e) {
+          closeScanner();
+          ocrBtn.disabled = false;
+          if (statusEl) statusEl.textContent = "OCR failed.";
+        }
+      }, 2500);
+    });
+  }
+
+  // ── Accordion groups ──────────────────────────────────────────────────────
+  function openGroup(id) {
+    const body = el(id);
+    if (!body) return;
+    body.classList.add("is-open");
+    const header = document.querySelector(`[data-target="${id}"]`);
+    if (header) header.classList.add("is-open");
+  }
+
+  document.querySelectorAll(".field-group-header").forEach(header => {
+    header.addEventListener("click", () => {
+      const targetId = header.dataset.target;
+      const body = el(targetId);
+      if (!body) return;
+      const isOpen = body.classList.contains("is-open");
+      body.classList.toggle("is-open", !isOpen);
+      header.classList.toggle("is-open", !isOpen);
+    });
+  });
+
+  // ── Image URL input live preview ──────────────────────────────────────────
+  const imgInput = el("image-url-input");
+  if (imgInput && imgInput.value) previewImageUrl(imgInput.value);
+
+  // ── Expiry badge init ─────────────────────────────────────────────────────
+  const expiryInput = el("item-expiry");
+  if (expiryInput && expiryInput.value) updateExpiryBadge(expiryInput.value);
+
+})();
+</script>
+{% endblock %}

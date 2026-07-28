@@ -1,0 +1,505 @@
+{% extends "base.html" %}
+{% block title %}Fast Scanner{% endblock %}
+
+{% block head %}
+<style>
+/* ── Fast Scanner Page ──────────────────────────────────────────── */
+.scanner-full-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: calc(100vh - 120px);
+  max-width: 900px;
+}
+
+.scanner-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.scanner-main-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 640px) {
+  .scanner-main-panel { grid-template-columns: 1fr; }
+}
+
+/* Live camera panel */
+.camera-panel {
+  background: #000;
+  border-radius: 20px;
+  overflow: hidden;
+  position: relative;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.camera-panel #fast-scanner-viewport {
+  width: 100%;
+  flex: 1;
+}
+.camera-panel #fast-scanner-viewport video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+}
+.camera-panel #fast-scanner-viewport canvas {
+  display: none !important;
+}
+
+.scan-overlay-ring {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.scan-ring {
+  width: 200px; height: 200px;
+  border: 2px solid rgba(255,255,255,.3);
+  border-radius: 20px;
+  position: relative;
+}
+.scan-ring::before, .scan-ring::after {
+  content: "";
+  position: absolute;
+  width: 20px; height: 20px;
+  border-color: var(--accent);
+  border-style: solid;
+}
+.scan-ring::before { top: -2px; left: -2px; border-width: 3px 0 0 3px; border-radius: 4px 0 0 0; }
+.scan-ring::after  { bottom: -2px; right: -2px; border-width: 0 3px 3px 0; border-radius: 0 0 4px 0; }
+.scan-ring-line {
+  position: absolute;
+  left: 4px; right: 4px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  box-shadow: 0 0 10px var(--accent);
+  animation: scanLaser 2s ease-in-out infinite;
+  top: 50%;
+}
+@keyframes scanLaser {
+  0%, 100% { top: 10%; opacity: .7; }
+  50%       { top: 88%; opacity: 1; }
+}
+
+.camera-status-bar {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(transparent, rgba(0,0,0,.7));
+  color: #fff;
+  padding: 20px 16px 14px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.camera-controls {
+  position: absolute;
+  top: 12px; left: 12px; right: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.camera-badge {
+  background: rgba(0,0,0,.6);
+  color: #fff;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+}
+.camera-badge.live { color: #4ade80; }
+.camera-badge.live::before { content: "● "; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Results panel */
+.results-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+.scan-result-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  animation: slideInRight .3s cubic-bezier(.34,1.56,.64,1);
+  position: relative;
+}
+@keyframes slideInRight { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
+
+.scan-result-card.success { border-color: #22c55e; }
+.scan-result-card.duplicate { border-color: #f59e0b; }
+.scan-result-card.not-found { border-color: var(--muted); }
+
+.src-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px; }
+.src-img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--surface-2); flex-shrink: 0; }
+.src-img-placeholder { width: 44px; height: 44px; border-radius: 8px; background: var(--surface-2); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 18px; flex-shrink: 0; }
+.src-info { flex: 1; }
+.src-name { font-weight: 700; font-size: 14px; line-height: 1.3; }
+.src-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.src-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.src-actions button, .src-actions a { font-size: 11px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; text-decoration: none; transition: background .15s; }
+.src-actions button:hover, .src-actions a:hover { background: var(--border); }
+.src-actions .btn-add-stock { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.empty-results {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  color: var(--muted); text-align: center; gap: 10px;
+}
+.empty-results .empty-icon { font-size: 48px; opacity: .5; }
+
+/* Counter strip */
+.scanner-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.stat-pill {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.stat-pill span { color: var(--accent); }
+
+/* Mode toggle */
+.mode-toggle { display: flex; gap: 6px; align-items: center; }
+.mode-btn {
+  padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--muted); cursor: pointer; transition: all .15s;
+}
+.mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <span class="eyebrow">Inventory</span>
+    <h1>⚡ Fast Barcode Scanner</h1>
+    <p>Continuous scanning mode — ideal for bulk inventory entry & receiving.</p>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <a href="{{ url_for('inventory_add') }}" class="btn btn-ghost">+ Manual entry</a>
+    <a href="{{ url_for('inventory') }}" class="btn btn-ghost">← Inventory</a>
+  </div>
+</div>
+
+<!-- Stats strip -->
+<div class="scanner-stats">
+  <div class="stat-pill">📦 Scanned: <span id="stat-scanned">0</span></div>
+  <div class="stat-pill">✅ Added: <span id="stat-added">0</span></div>
+  <div class="stat-pill">📈 Stock updates: <span id="stat-updated">0</span></div>
+  <div class="stat-pill">❓ Not found: <span id="stat-notfound">0</span></div>
+</div>
+
+<!-- Mode & controls -->
+<div class="scanner-top">
+  <div class="mode-toggle">
+    <span style="font-size:12px;color:var(--muted);">Mode:</span>
+    <button class="mode-btn active" id="mode-add" onclick="setMode('add')">➕ Add Stock</button>
+    <button class="mode-btn" id="mode-receive" onclick="setMode('receive')">📥 Receive Purchase</button>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button class="btn btn-danger" id="stop-scan-btn" style="display:none;" onclick="stopCamera()">⏹ Stop</button>
+    <button class="btn btn-brass" id="start-scan-btn" onclick="startCamera()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+      Start Camera
+    </button>
+    <button class="btn btn-ghost" onclick="clearResults()">🗑 Clear</button>
+  </div>
+</div>
+
+<!-- Main scanner layout -->
+<div class="scanner-main-panel">
+  <!-- Camera -->
+  <div class="camera-panel" id="camera-panel">
+    <div id="fast-scanner-viewport"></div>
+    <div class="camera-controls">
+      <span class="camera-badge live" id="camera-live-badge" style="display:none;">LIVE</span>
+      <span class="camera-badge" id="format-badge">All formats supported</span>
+    </div>
+    <div class="scan-overlay-ring" id="scan-ring-overlay" style="display:none;">
+      <div class="scan-ring">
+        <div class="scan-ring-line"></div>
+      </div>
+    </div>
+    <div class="camera-status-bar" id="camera-status">
+      <div style="opacity:.6;margin-bottom:4px;">Click "Start Camera" to begin</div>
+      <div style="font-size:11px;opacity:.4;">EAN-13 · EAN-8 · UPC-A · CODE-128 · QR · ITF ···</div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="results-panel" id="results-panel">
+    <div class="empty-results" id="empty-results">
+      <div class="empty-icon">📷</div>
+      <div style="font-weight:600;">Start scanning to see results</div>
+      <div style="font-size:12px;">Each scan will appear here instantly</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/html5-qrcode.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scanner.js') }}"></script>
+<script>
+(function () {
+  "use strict";
+
+  let scanner = null;
+  let running = false;
+  let scanCooldown = false;
+  let currentMode = "add";
+
+  // Stats
+  let stats = { scanned: 0, added: 0, updated: 0, notfound: 0 };
+
+  const ALL_FORMATS = [
+    Html5QrcodeSupportedFormats.EAN_13,
+    Html5QrcodeSupportedFormats.EAN_8,
+    Html5QrcodeSupportedFormats.UPC_A,
+    Html5QrcodeSupportedFormats.UPC_E,
+    Html5QrcodeSupportedFormats.CODE_128,
+    Html5QrcodeSupportedFormats.CODE_39,
+    Html5QrcodeSupportedFormats.QR_CODE,
+    Html5QrcodeSupportedFormats.ITF,
+    Html5QrcodeSupportedFormats.CODE_93,
+    Html5QrcodeSupportedFormats.CODABAR,
+  ];
+
+  function el(id) { return document.getElementById(id); }
+
+  function updateStat(key) {
+    stats[key]++;
+    const map = { scanned: "stat-scanned", added: "stat-added", updated: "stat-updated", notfound: "stat-notfound" };
+    for (const [k, v] of Object.entries(map)) {
+      const e = el(v);
+      if (e) e.textContent = stats[k];
+    }
+  }
+
+  window.setMode = function (mode) {
+    currentMode = mode;
+    el("mode-add").classList.toggle("active", mode === "add");
+    el("mode-receive").classList.toggle("active", mode === "receive");
+  };
+
+  window.startCamera = function () {
+    if (running) return;
+    const viewport = el("fast-scanner-viewport");
+    if (!viewport) return;
+    viewport.innerHTML = "";
+
+    scanner = new Html5Qrcode("fast-scanner-viewport", { formatsToSupport: ALL_FORMATS, verbose: false });
+
+    Html5Qrcode.getCameras().then(cameras => {
+      if (!cameras.length) {
+        updateStatus("No camera found.", false);
+        return;
+      }
+      const cam = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
+      return scanner.start(
+        { deviceId: { exact: cam.id } },
+        { fps: 15, qrbox: { width: 220, height: 220 }, aspectRatio: 1.0, formatsToSupport: ALL_FORMATS },
+        onScanSuccess,
+        () => {}
+      );
+    }).then(() => {
+      running = true;
+      el("start-scan-btn").style.display = "none";
+      el("stop-scan-btn").style.display = "";
+      el("camera-live-badge").style.display = "";
+      el("scan-ring-overlay").style.display = "flex";
+      updateStatus("🟢 Ready — point at barcode.", true);
+    }).catch(e => {
+      updateStatus("Camera access denied.", false);
+    });
+  };
+
+  window.stopCamera = function () {
+    running = false;
+    if (scanner) {
+      scanner.stop().then(() => scanner.clear()).catch(() => {});
+      scanner = null;
+    }
+    el("start-scan-btn").style.display = "";
+    el("stop-scan-btn").style.display = "none";
+    el("camera-live-badge").style.display = "none";
+    el("scan-ring-overlay").style.display = "none";
+    updateStatus("Camera stopped.", false);
+  };
+
+  function updateStatus(msg, live) {
+    const s = el("camera-status");
+    if (s) s.innerHTML = `<div>${msg}</div>`;
+  }
+
+  function onScanSuccess(code) {
+    if (!running || scanCooldown) return;
+    scanCooldown = true;
+
+    // Feedback
+    if (navigator.vibrate) navigator.vibrate([200, 50, 100]);
+    playScanBeep(true);
+    updateStat("scanned");
+    updateStatus(`⚡ Scanning: <code style="font-family:monospace;font-size:11px;">${code}</code>`, true);
+
+    // Lookup
+    fetch(`/inventory/barcode_lookup?code=${encodeURIComponent(code)}`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(data => {
+        if (data._duplicate) {
+          if (currentMode === "receive") {
+            // Auto-increase stock by 1 in receive mode
+            fetch(`/inventory/stock_increase/${data._existing_id}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ qty: 1 }),
+            }).then(r => r.json()).then(d => {
+              updateStat("updated");
+              addResultCard({
+                type: "duplicate",
+                code,
+                name: data._existing_name,
+                meta: `Stock updated to ${d.new_stock} ${data._existing_unit_label || "pcs"}`,
+                existingId: data._existing_id,
+                data: null,
+              });
+            });
+          } else {
+            updateStat("updated");
+            addResultCard({
+              type: "duplicate",
+              code,
+              name: data._existing_name,
+              meta: `Already in inventory · Stock: ${data._existing_stock}`,
+              existingId: data._existing_id,
+              data: null,
+            });
+          }
+        } else if (data._found) {
+          updateStat("added");
+          addResultCard({
+            type: "success",
+            code,
+            name: data.name,
+            meta: `${data.brand || ""} · ${data.category || ""} · via ${data.source_db || "AI"}`,
+            image: data.image_url,
+            data,
+          });
+        } else {
+          updateStat("notfound");
+          addResultCard({
+            type: "not-found",
+            code,
+            name: "No product found",
+            meta: `Barcode: ${code}`,
+            data,
+          });
+        }
+        // Resume scanning
+        setTimeout(() => {
+          scanCooldown = false;
+          updateStatus("🟢 Ready — point at next barcode.", true);
+        }, 1200);
+      })
+      .catch(() => {
+        addResultCard({ type: "not-found", code, name: "Lookup failed", meta: "Check network" });
+        setTimeout(() => { scanCooldown = false; }, 1200);
+      });
+  }
+
+  function addResultCard(item) {
+    const panel = el("results-panel");
+    const empty = el("empty-results");
+    if (empty) empty.style.display = "none";
+
+    const card = document.createElement("div");
+    card.className = `scan-result-card ${item.type}`;
+
+    const imgHtml = item.image
+      ? `<img class="src-img" src="/inventory/image_proxy?url=${encodeURIComponent(item.image)}" onerror="this.style.display='none'" alt="">`
+      : `<div class="src-img-placeholder">${item.type === "success" ? "🛍️" : item.type === "duplicate" ? "📦" : "❓"}</div>`;
+
+    let actionsHtml = "";
+    if (item.type === "success") {
+      // Provide link to prefill add form
+      const params = new URLSearchParams({ code: item.code });
+      actionsHtml = `
+        <a href="/inventory/add" class="btn-add-stock" onclick="sessionStorage.setItem('prefill',JSON.stringify(${JSON.stringify(JSON.stringify(item.data || {}))}))">➕ Add to inventory</a>
+        <button onclick="this.closest('.scan-result-card').remove()">✕ Dismiss</button>`;
+    } else if (item.type === "duplicate") {
+      actionsHtml = `
+        <button class="btn-add-stock" onclick="addStock(${item.existingId}, this)">+1 Stock</button>
+        <a href="/inventory/edit/${item.existingId}">✏️ Edit</a>
+        <button onclick="this.closest('.scan-result-card').remove()">✕</button>`;
+    } else {
+      actionsHtml = `
+        <a href="/inventory/add">✏️ Add manually</a>
+        <button onclick="this.closest('.scan-result-card').remove()">✕</button>`;
+    }
+
+    card.innerHTML = `
+      <div class="src-header">
+        ${imgHtml}
+        <div class="src-info">
+          <div class="src-name">${item.name}</div>
+          <div class="src-meta">${item.meta}</div>
+          <div class="src-meta" style="font-family:monospace;margin-top:2px;">${item.code}</div>
+        </div>
+      </div>
+      <div class="src-actions">${actionsHtml}</div>`;
+
+    panel.insertBefore(card, panel.firstChild);
+
+    // Limit to 20 cards
+    const cards = panel.querySelectorAll(".scan-result-card");
+    if (cards.length > 20) cards[cards.length - 1].remove();
+  }
+
+  window.addStock = function (productId, btn) {
+    btn.disabled = true;
+    fetch(`/inventory/stock_increase/${productId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ qty: 1 }),
+    }).then(r => r.json()).then(d => {
+      btn.textContent = `✅ Stock: ${d.new_stock}`;
+      updateStat("updated");
+    }).catch(() => { btn.disabled = false; });
+  };
+
+  window.clearResults = function () {
+    const panel = el("results-panel");
+    panel.querySelectorAll(".scan-result-card").forEach(c => c.remove());
+    const empty = el("empty-results");
+    if (empty) empty.style.display = "flex";
+    stats = { scanned: 0, added: 0, updated: 0, notfound: 0 };
+    ["stat-scanned","stat-added","stat-updated","stat-notfound"].forEach(id => {
+      const e = el(id); if (e) e.textContent = "0";
+    });
+  };
+
+})();
+</script>
+{% endblock %}

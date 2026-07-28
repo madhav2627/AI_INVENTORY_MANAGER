@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Alerts{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <span class="eyebrow">Stock intelligence</span>
+    <h1>Alerts</h1>
+    <p>What's low right now, and what the demand model expects to run out soon.</p>
+  </div>
+  <div class="page-head-actions">
+    <button class="btn btn-primary" id="retrain-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/>
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+      Retrain forecast model
+    </button>
+  </div>
+</div>
+
+<div class="model-banner">
+  <div>
+    {% if model_status.status == 'trained' %}
+      <strong>Forecast model active.</strong>
+      Trained on {{ model_status.rows_available }} days of product history across {{ model_status.products_covered }} products.
+      {% if model_status.mean_absolute_error is not none %}
+        Typical daily error: {{ model_status.mean_absolute_error }} units.
+      {% endif %}
+    {% elif model_status.status == 'insufficient_data' %}
+      <strong>Still learning.</strong>
+      {{ model_status.reason }} Using a simple average-based estimate until there's
+      {{ model_status.days_needed or 14 }} days of sales history to train on.
+    {% else %}
+      <strong>No sales recorded yet.</strong>
+      Predictions will appear once you start billing.
+    {% endif %}
+  </div>
+  <span id="retrain-status" class="hint"></span>
+</div>
+
+<div class="section-title" style="margin-top:0;">
+  <h2>Low stock now</h2>
+</div>
+<div class="table-wrap" style="margin-bottom:30px;">
+  {% if low_stock %}
+    {% for p in low_stock %}
+    <div class="alert-row {{ 'alert-row--danger' if p.stock_qty <= 0 else 'alert-row--warn' }}">
+      <div>
+        <div class="a-name">{{ p.name }}</div>
+        <div class="a-meta">{{ p.category }}</div>
+      </div>
+      <div class="mono">{{ p.stock_qty|round(1) }} {{ p.unit_label }}</div>
+      <div class="a-meta">reorder at {{ p.reorder_level|round(1) }}</div>
+      <span class="badge {{ 'badge-danger' if p.stock_qty <= 0 else 'badge-warn' }}">
+        {{ 'Out of stock' if p.stock_qty <= 0 else 'Low stock' }}
+      </span>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty-row"><strong>Nothing is low right now.</strong> All items are above their reorder level.</div>
+  {% endif %}
+</div>
+
+<div class="section-title">
+  <h2>Predicted to run out soon</h2>
+</div>
+<div class="table-wrap">
+  {% if predicted %}
+    {% for p in predicted %}
+    <div class="alert-row alert-row--info">
+      <div>
+        <div class="a-name">{{ p.name }}</div>
+        <div class="a-meta">{{ p.predicted_daily_demand }} {{ '' }}/day predicted</div>
+      </div>
+      <div class="mono">{{ p.stock_qty|round(1) }} left</div>
+      <div class="a-meta">~{{ p.days_to_stockout }} days left</div>
+      <span class="method-tag">{{ 'ML model' if p.method == 'ml_model' else 'Estimate' }}</span>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty-row"><strong>No predictions yet.</strong> They will appear once there's enough sales history for a given product.</div>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.getElementById("retrain-btn").addEventListener("click", (e) => {
+    const btn = e.currentTarget;
+    const status = document.getElementById("retrain-status");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="btn-spinner"></span> Retraining\u2026';
+    fetch("/ml/retrain", { method: "POST" })
+      .then((r) => r.json())
+      .then((data) => {
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Retrain forecast model';
+        if (data.status === "trained") {
+          status.textContent = "Model retrained successfully.";
+          status.style.color = "var(--success)";
+          setTimeout(() => window.location.reload(), 900);
+        } else {
+          status.textContent = data.reason || "Not enough data to train yet.";
+        }
+      });
+  });
+</script>
+{% endblock %}

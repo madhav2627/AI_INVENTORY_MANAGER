@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Theme init: run before CSS loads to prevent flash of wrong theme -->
+<script>
+  (function () {
+    var saved = localStorage.getItem('ledger-theme');
+    if (saved === 'dark' || (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.setAttribute('data-theme', 'light');
+    }
+  })();
+</script>
+<title>{% block title %}{{ settings.business_name }}{% endblock %} &middot; Ledger</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+{% block head %}{% endblock %}
+</head>
+<body>
+<header class="mobile-header no-print">
+  <button class="menu-toggle" id="mobile-menu-toggle" aria-label="Open menu">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </button>
+  <div class="mobile-brand">
+    <span class="brand-name">Ledger</span>
+    <span class="brand-sub">&middot; {{ settings.business_name }}</span>
+  </div>
+  <button class="theme-toggle-btn" id="mobile-theme-toggle" title="Toggle dark / light theme" aria-label="Toggle theme">
+    <!-- Sun icon -->
+    <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <circle cx="12" cy="12" r="5"/>
+      <line x1="12" y1="1" x2="12" y2="3"/>
+      <line x1="12" y1="21" x2="12" y2="23"/>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+      <line x1="1" y1="12" x2="3" y2="12"/>
+      <line x1="21" y1="12" x2="23" y2="12"/>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+    </svg>
+    <!-- Moon icon -->
+    <svg class="icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+  </button>
+</header>
+
+<div class="nav-overlay no-print" id="nav-overlay"></div>
+
+<div class="shell" id="app-shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="17" height="17" fill="none">
+          <rect x="3" y="6" width="26" height="20" rx="2" stroke="currentColor" stroke-width="1.8"/>
+          <line x1="3" y1="12" x2="29" y2="12" stroke="currentColor" stroke-width="1.8"/>
+          <line x1="8" y1="18" x2="16" y2="18" stroke="currentColor" stroke-width="1.8"/>
+        </svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-name">Ledger</span>
+        <span class="brand-sub">{{ settings.business_name }}</span>
+      </span>
+    </div>
+
+    <nav class="nav">
+      <a href="{{ url_for('dashboard') }}" class="nav-item {{ 'is-active' if active=='dashboard' }}">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+          </svg>
+        </span>
+        <span class="nav-index">01</span> Overview
+      </a>
+      <a href="{{ url_for('billing') }}" class="nav-item {{ 'is-active' if active=='billing' }}">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/>
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <path d="M16 10a4 4 0 0 1-8 0"/>
+          </svg>
+        </span>
+        <span class="nav-index">02</span> Point of sale
+      </a>
+      <a href="{{ url_for('inventory') }}" class="nav-item {{ 'is-active' if active=='inventory' }}">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+            <line x1="12" y1="22.08" x2="12" y2="12"/>
+          </svg>
+        </span>
+        <span class="nav-index">03</span> Inventory
+      </a>
+      <a href="{{ url_for('barcode_page') }}" class="nav-item {{ 'is-active' if active=='barcode' }}">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <rect x="2" y="4" width="3" height="16" rx="0.5"/>
+            <rect x="7" y="4" width="1.5" height="16" rx="0.5"/>
+            <rect x="11" y="4" width="2.5" height="16" rx="0.5"/>
+            <rect x="16" y="4" width="1" height="16" rx="0.5"/>
+            <rect x="19" y="4" width="3" height="16" rx="0.5"/>
+          </svg>
+        </span>
+        <span class="nav-index">04</span> Codes &amp; labels
+      </a>
+      <a href="{{ url_for('scanner_page') }}" class="nav-item {{ 'is-active' if active=='scanner' }}">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="5" height="5"/>
+            <rect x="16" y="3" width="5" height="5"/>
+            <rect x="3" y="16" width="5" height="5"/>
+            <path d="M21 16h-3a2 2 0 0 0-2 2v3"/>
+            <path d="M21 21v.01"/>
+            <path d="M12 7v3a2 2 0 0 1-2 2H7"/>
+            <path d="M3 12h.01"/>
+            <path d="M12 3h.01"/>
+            <path d="M12 16v.01"/>
+            <path d="M16 12h1"/>
+            <path d="M21 12v.01"/>
+            <path d="M12 21v-1"/>
+          </svg>
+        </span>
+        <span class="nav-index">05</span> Fast Scanner
+      </a>
+
+      <a href="{{ url_for('alerts') }}" class="nav-item {{ 'is-active' if active=='alerts' }}">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+        </span>
+        <span class="nav-index">05</span> Insights
+      </a>
+      <a href="{{ url_for('ai_center') }}" class="nav-item {{ 'is-active' if active=='ai' }}">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
+            <line x1="9" y1="21" x2="15" y2="21"/>
+            <line x1="10" y1="24" x2="14" y2="24"/>
+          </svg>
+        </span>
+        <span class="nav-index">06</span> AI Center
+      </a>
+      <a href="{{ url_for('reports') }}" class="nav-item {{ 'is-active' if active=='reports' }}">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"/>
+            <line x1="12" y1="20" x2="12" y2="4"/>
+            <line x1="6" y1="20" x2="6" y2="14"/>
+          </svg>
+        </span>
+        <span class="nav-index">07</span> Reports
+      </a>
+      <a href="{{ url_for('settings_page') }}" class="nav-item {{ 'is-active' if active=='settings' }}">
+        <span class="nav-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </span>
+        <span class="nav-index">08</span> Settings
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <span class="dot-live" aria-hidden="true"></span>
+      <span style="flex:1;">Running locally &middot; offline</span>
+      <button class="theme-toggle-btn" id="theme-toggle-btn" title="Toggle dark / light theme" aria-label="Toggle theme">
+        <!-- Sun icon (shown in dark mode to switch to light) -->
+        <svg class="icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="12" r="5"/>
+          <line x1="12" y1="1" x2="12" y2="3"/>
+          <line x1="12" y1="21" x2="12" y2="23"/>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+          <line x1="1" y1="12" x2="3" y2="12"/>
+          <line x1="21" y1="12" x2="23" y2="12"/>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        <!-- Moon icon (shown in light mode to switch to dark) -->
+        <svg class="icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+    </div>
+  </aside>
+
+  <main class="main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-stack">
+          {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<script src="{{ url_for('static', filename='js/app.js') }}?v=3"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

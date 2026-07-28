@@ -1,0 +1,502 @@
+{% extends "base.html" %}
+{% block title %}Barcode & QR Generator{% endblock %}
+
+{% block head %}
+<style>
+/* ── Barcode Generator Extra Styles ─────────────────────────────────────── */
+.gen-grid {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--brass-deep);
+  margin: 20px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-label::after {
+  content: '';
+  flex: 1;
+  border-top: 1px dashed var(--border-strong);
+}
+
+.label-options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+  color: var(--text-1);
+}
+.toggle-row:last-child { border-bottom: none; }
+.toggle-row span { font-weight: 500; }
+.toggle-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-track {
+  position: absolute; inset: 0;
+  background: var(--border-strong);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+.toggle-switch input:checked + .toggle-track { background: var(--brass); }
+.toggle-switch input:checked + .toggle-track::after { transform: translateX(18px); }
+
+.size-pills { display: flex; gap: 8px; margin-top: 6px; }
+.size-pill {
+  flex: 1;
+  padding: 8px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-align: center;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.size-pill:hover { border-color: var(--brass); color: var(--brass-deep); transform: translateY(-1px); }
+.size-pill.is-active { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.size-pill:active { transform: scale(0.96); }
+
+.preview-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 440px;
+  justify-content: flex-start;
+  position: relative;
+  overflow: hidden;
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--paper);
+}
+.preview-toolbar-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.preview-actions { display: flex; gap: 8px; }
+
+.preview-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 30px;
+  min-height: 320px;
+  background: #f7f6f0;
+  background-image:
+    linear-gradient(rgba(191, 155, 98, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(191, 155, 98, 0.05) 1px, transparent 1px);
+  background-size: 16px 16px;
+  position: relative;
+}
+
+/* Futuristic Scanning target corners */
+.preview-stage::before, .preview-stage::after {
+  content: '';
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-color: rgba(191, 155, 98, 0.25);
+  border-style: solid;
+  pointer-events: none;
+}
+.preview-stage::before {
+  top: 20px; left: 20px;
+  border-width: 2px 0 0 2px;
+}
+.preview-stage::after {
+  bottom: 20px; right: 20px;
+  border-width: 0 2px 2px 0;
+}
+
+.label-ticket {
+  background: #fff;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 16px -6px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0,0,0,0.02);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.label-ticket.size-sm { width: 170px; padding: 18px 16px 14px; }
+.label-ticket.size-md { width: 240px; padding: 22px 20px 16px; }
+.label-ticket.size-lg { width: 320px; padding: 28px 26px 20px; }
+
+.label-ticket::before,
+.label-ticket::after {
+  content: '';
+  position: absolute;
+  left: 12px; right: 12px;
+  height: 0;
+  border-top: 2px dashed rgba(0,0,0,0.06);
+}
+.label-ticket::before { top: 10px; }
+.label-ticket::after { bottom: 10px; }
+
+.label-product-name {
+  font-family: var(--font-body);
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+  line-height: 1.25;
+  margin-bottom: 8px;
+  word-break: break-word;
+  width: 100%;
+}
+.label-ticket.size-sm .label-product-name { font-size: 9.5px; }
+.label-ticket.size-md .label-product-name { font-size: 12.5px; }
+.label-ticket.size-lg .label-product-name { font-size: 15px; }
+
+.label-barcode-img {
+  width: 100%;
+  display: block;
+  image-rendering: crisp-edges;
+}
+.label-ticket.size-sm .label-barcode-img { max-height: 50px; object-fit: contain; }
+.label-ticket.size-md .label-barcode-img { max-height: 72px; object-fit: contain; }
+.label-ticket.size-lg .label-barcode-img { max-height: 96px; object-fit: contain; }
+
+.label-code-text {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+  text-align: center;
+  margin-top: 3px;
+  letter-spacing: 0.08em;
+}
+.label-ticket.size-sm .label-code-text { font-size: 7px; }
+.label-ticket.size-md .label-code-text { font-size: 9px; }
+.label-ticket.size-lg .label-code-text { font-size: 11px; }
+
+.label-price-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  width: 100%;
+}
+.label-price-currency { font-family: var(--font-mono); color: var(--text-2); }
+.label-price-value { font-family: var(--font-display); font-weight: 600; color: var(--brass-deep); }
+.label-ticket.size-sm .label-price-currency { font-size: 9px; }
+.label-ticket.size-sm .label-price-value { font-size: 14px; }
+.label-ticket.size-md .label-price-currency { font-size: 11px; }
+.label-ticket.size-md .label-price-value { font-size: 18px; }
+.label-ticket.size-lg .label-price-currency { font-size: 13px; }
+.label-ticket.size-lg .label-price-value { font-size: 24px; }
+
+.preview-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-3);
+  text-align: center;
+}
+.preview-empty-state svg { color: var(--border-strong); }
+.preview-empty-state p { font-size: 13px; max-width: 220px; line-height: 1.5; margin: 0; }
+
+.preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--paper);
+  gap: 10px;
+}
+.qty-selector { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); }
+.qty-selector label { font-weight: 600; white-space: nowrap; }
+.qty-selector input { width: 70px; padding: 7px 8px; font-family: var(--font-mono); font-size: 13.5px; text-align: center; border-radius: var(--radius-sm); }
+
+.toast {
+  position: fixed;
+  bottom: 28px; right: 28px;
+  background: var(--ink);
+  color: #f5f1e6;
+  padding: 12px 20px;
+  border-radius: var(--radius-md);
+  font-size: 13.5px; font-weight: 500;
+  box-shadow: var(--shadow-pop);
+  z-index: 999;
+  transform: translateY(80px);
+  opacity: 0;
+  transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1), opacity 0.2s;
+  pointer-events: none;
+  display: flex; align-items: center; gap: 10px;
+}
+.toast.is-visible { transform: translateY(0); opacity: 1; }
+
+@media (max-width: 980px) {
+  .gen-grid { grid-template-columns: 1fr; }
+  .label-options-grid { grid-template-columns: 1fr; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <span class="eyebrow">Identification</span>
+    <h1>Barcode &amp; QR generator</h1>
+    <p>Create barcode labels with product name, price, and more — then print or assign to inventory.</p>
+  </div>
+</div>
+
+<div class="gen-grid">
+  <!-- ── Left panel ──────────────────────────────────────────────── -->
+  <div class="card" style="padding:22px;">
+
+    <div class="section-label">Code type</div>
+    <div class="type-toggle" id="type-toggle">
+      {% for t in code_types %}
+      <button type="button" data-type="{{ t }}" class="{{ 'is-active' if loop.first }}">
+        {{ 'QR Code' if t == 'QR' else t }}
+      </button>
+      {% endfor %}
+    </div>
+
+    <div class="form-field">
+      <label>Code value</label>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="value-input" class="mono-input" placeholder="Leave blank to auto-generate" style="flex:1;">
+        <button class="btn btn-ghost btn-sm" id="copy-btn" title="Copy code" style="display:none;padding:0 10px;flex-shrink:0;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </button>
+      </div>
+      <span class="hint" id="value-hint">CODE128 accepts letters and numbers.</span>
+    </div>
+
+    <button class="btn btn-brass btn-block" id="generate-btn" style="margin-top:10px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="17" y="17" width="4" height="4"/><rect x="14" y="14" width="3" height="3"/></svg>
+      Generate code
+    </button>
+
+    <!-- Label details -->
+    <div class="section-label" style="margin-top:22px;">Label details</div>
+
+    <div class="form-field">
+      <label>Product name on label</label>
+      <input type="text" id="label-name" placeholder="e.g. Colgate Toothpaste 100g">
+    </div>
+
+    <div class="label-options-grid" style="margin-top:10px;">
+      <div class="form-field">
+        <label>Price</label>
+        <input type="number" step="0.01" id="label-price" placeholder="0.00">
+      </div>
+      <div class="form-field">
+        <label>Currency</label>
+        <input type="text" id="label-currency" value="&#8377;" maxlength="5">
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <div class="toggle-row">
+        <span>Show product name</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="show-name" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span>Show price</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="show-price" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span>Show code text below barcode</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="show-code-text" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="form-field" style="margin-top:14px;">
+      <label>Label size</label>
+      <div class="size-pills">
+        <button type="button" class="size-pill" data-size="sm">Small</button>
+        <button type="button" class="size-pill is-active" data-size="md">Medium</button>
+        <button type="button" class="size-pill" data-size="lg">Large</button>
+      </div>
+    </div>
+
+    <hr class="divider-dashed">
+
+    <!-- Assign to product -->
+    <div class="section-label" style="margin-top:0;">Attach to product</div>
+    <div class="type-toggle" id="mode-toggle">
+      <button type="button" data-mode="existing" class="is-active">Existing</button>
+      <button type="button" data-mode="new">New product</button>
+    </div>
+
+    <div id="existing-mode">
+      <div class="form-field">
+        <label>Choose product</label>
+        <select id="product-select">
+          <option value="">Don't assign &mdash; just print</option>
+          {% for p in products %}
+          <option value="{{ p.id }}">{{ p.name }}{{ ' (has a code)' if p.code_value else '' }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-primary btn-block" id="assign-btn" disabled>Assign to selected product</button>
+    </div>
+
+    <div id="new-mode" style="display:none;">
+      <div class="form-field">
+        <label>Item name</label>
+        <input type="text" id="new-name" placeholder="e.g. Colgate Toothpaste 100g">
+      </div>
+      <div class="form-grid" style="grid-template-columns:1fr 1fr;margin-top:4px;">
+        <div class="form-field">
+          <label>Category</label>
+          <input type="text" id="new-category" value="General">
+        </div>
+        <div class="form-field">
+          <label>Unit label</label>
+          <input type="text" id="new-unit" value="pcs" placeholder="pcs, kg, ltr">
+        </div>
+        <div class="form-field">
+          <label>Selling price</label>
+          <input type="number" step="0.01" id="new-price" placeholder="0.00">
+        </div>
+        <div class="form-field">
+          <label>Cost price</label>
+          <input type="number" step="0.01" id="new-cost" placeholder="0.00">
+        </div>
+        <div class="form-field">
+          <label>Opening stock</label>
+          <input type="number" step="0.01" id="new-stock" placeholder="0">
+        </div>
+        <div class="form-field">
+          <label>Reorder level</label>
+          <input type="number" step="0.01" id="new-reorder" value="5">
+        </div>
+      </div>
+      <button class="btn btn-primary btn-block" id="create-btn" disabled style="margin-top:6px;">Save as new product</button>
+      <span class="hint" style="margin-top:6px;display:block;">Generate a code with an explicit value first.</span>
+    </div>
+
+  </div>
+
+  <!-- ── Right panel: live label preview ────────────────────────── -->
+  <div class="preview-card" id="preview-card">
+
+    <div class="preview-toolbar">
+      <span class="preview-toolbar-title">Label preview</span>
+      <div class="preview-actions" id="preview-actions" style="display:none;">
+        <button class="btn btn-ghost btn-sm" id="copy-img-btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          Copy code
+        </button>
+        <button class="btn btn-ghost btn-sm" id="download-btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download
+        </button>
+      </div>
+    </div>
+
+    <div class="preview-stage" id="preview-stage">
+      <div class="preview-empty-state" id="preview-placeholder">
+        <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+          <rect x="2" y="6" width="3" height="12" rx="0.5"/>
+          <rect x="7" y="6" width="1" height="12" rx="0.5"/>
+          <rect x="10" y="6" width="2" height="12" rx="0.5"/>
+          <rect x="14" y="6" width="1" height="12" rx="0.5"/>
+          <rect x="17" y="6" width="3" height="12" rx="0.5"/>
+        </svg>
+        <p>Fill in label details and hit <strong>Generate</strong> to preview your label here.</p>
+      </div>
+
+      <div class="label-ticket size-md" id="label-ticket" style="display:none;">
+        <div class="label-product-name" id="ticket-name"></div>
+        <img class="label-barcode-img" id="ticket-img" src="" alt="barcode">
+        <div class="label-code-text" id="ticket-code"></div>
+        <div class="label-price-row" id="ticket-price-row">
+          <span class="label-price-currency" id="ticket-currency">&#8377;</span>
+          <span class="label-price-value" id="ticket-price">0.00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="preview-footer">
+      <div class="qty-selector">
+        <label for="print-qty">Copies</label>
+        <input type="number" id="print-qty" min="1" max="200" value="1">
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost btn-sm" id="print-btn" style="display:none;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+          Print labels
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">
+  <span style="font-size:16px;">&#10003;</span>
+  <span id="toast-msg">Done!</span>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/barcode.js') }}?v=4"></script>
+{% endblock %}

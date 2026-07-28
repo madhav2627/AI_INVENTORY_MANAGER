@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <span class="eyebrow" id="today-label"></span>
+    <h1 id="greeting-text">Good day, {{ settings.business_name }}.</h1>
+    <p>A quiet summary of your counter, your stock and the things that need attention.</p>
+  </div>
+  <div class="page-head-actions">
+    <a href="{{ url_for('inventory_add') }}" class="btn">Add item</a>
+    <a href="{{ url_for('billing') }}" class="btn btn-primary">Open point of sale</a>
+  </div>
+</div>
+
+{% if product_count == 0 %}
+<div class="empty-state">
+  <span class="eyebrow">Nothing yet</span>
+  <h2>Your workspace is ready and completely empty.</h2>
+  <p>Add your first product to unlock billing, code labels and ML-driven reorder suggestions.</p>
+  <a href="{{ url_for('inventory_add') }}" class="btn btn-primary">Add first product</a>
+</div>
+{% else %}
+
+<div class="hero-card stitch-top" style="margin-bottom:26px; display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:20px;">
+  <div>
+    <span class="stat-label">Today's sales</span>
+    <div class="hero-figure" data-count-to="{{ '%.2f'|format(today_total) }}" data-prefix="{{ settings.currency_symbol }}">{{ settings.currency_symbol }}{{ "%.2f"|format(today_total) }}</div>
+    <div class="stat-sub">{{ today_count }} transaction{{ 's' if today_count != 1 else '' }} recorded today</div>
+  </div>
+  <div style="text-align:right;">
+    <span class="stat-label">Last 7 days</span>
+    <div class="hero-figure-secondary" data-count-to="{{ '%.2f'|format(week_total) }}" data-prefix="{{ settings.currency_symbol }}">{{ settings.currency_symbol }}{{ "%.2f"|format(week_total) }}</div>
+  </div>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="stat-label">Items in inventory</div>
+    <div class="stat-value" data-count-to="{{ product_count }}">{{ product_count }}</div>
+    <div class="stat-sub">Active products tracked</div>
+  </div>
+  <div class="stat-card warn">
+    <div class="stat-label">Low stock</div>
+    <div class="stat-value" data-count-to="{{ low_stock|length }}">{{ low_stock|length }}</div>
+    <div class="stat-sub">At or below reorder level</div>
+  </div>
+  <div class="stat-card accent">
+    <div class="stat-label">Predicted to run out (7d)</div>
+    <div class="stat-value" data-count-to="{{ stockout_soon|length }}">{{ stockout_soon|length }}</div>
+    <div class="stat-sub">From the demand model</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Forecast engine</div>
+    <div class="stat-value" style="font-size:16px;">
+      {% if model_status.status == 'trained' %}Active
+      {% elif model_status.status == 'insufficient_data' %}Learning
+      {% else %}Not started{% endif %}
+    </div>
+    <div class="stat-sub">
+      {% if model_status.status == 'trained' %}{{ model_status.products_covered }} products modelled
+      {% else %}Needs more sales history{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="chart-card">
+  <div class="section-title" style="margin:0 0 10px;">
+    <h2>Sales, last 14 days</h2>
+  </div>
+  <canvas id="trendChart" height="90"></canvas>
+</div>
+
+<div class="report-grid">
+  <div>
+    <div class="section-title">
+      <h2>Recent transactions</h2>
+      <a href="{{ url_for('reports') }}" class="see-all">View reports</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Invoice</th><th>Time</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          {% for t in recent %}
+          <tr>
+            <td class="row-name mono">{{ t.invoice_no }}</td>
+            <td class="row-sub">{{ t.created_at.replace('T', ' ') }}</td>
+            <td class="num">{{ settings.currency_symbol }}{{ "%.2f"|format(t.total) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="empty-row">No sales recorded yet. They will appear here once you complete a checkout.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div>
+    <div class="section-title">
+      <h2>Needs attention</h2>
+      <a href="{{ url_for('alerts') }}" class="see-all">All alerts</a>
+    </div>
+    <div class="table-wrap">
+      {% if low_stock or stockout_soon %}
+        {% for p in low_stock[:4] %}
+        <div class="alert-row alert-row--warn" style="grid-template-columns: 1fr auto;">
+          <div>
+            <div class="a-name">{{ p.name }}</div>
+            <div class="a-meta">{{ p.stock_qty|round(1) }} {{ p.unit_label }} left &middot; reorder at {{ p.reorder_level|round(1) }}</div>
+          </div>
+          <span class="badge badge-warn">Low stock</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty-row">
+          <strong>Everything is well stocked</strong>
+          Nothing needs attention right now.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Time-aware greeting
+  (function() {
+    var hour = new Date().getHours();
+    var greeting = 'Good day';
+    if (hour < 12) greeting = 'Good morning';
+    else if (hour < 17) greeting = 'Good afternoon';
+    else greeting = 'Good evening';
+    var el = document.getElementById('greeting-text');
+    if (el) el.textContent = greeting + ', {{ settings.business_name }}.';
+
+    var dayLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    document.getElementById('today-label').textContent = dayLabel.toUpperCase();
+  })();
+</script>
+{% if product_count > 0 %}
+<script src="{{ url_for('static', filename='vendor/chart.min.js') }}"></script>
+<script>
+  const trendData = {{ trend|tojson }};
+  const labels = [];
+  const values = [];
+  const today = new Date();
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    labels.push(d.toLocaleDateString(undefined, {month:'short', day:'numeric'}));
+    values.push(trendData[key] || 0);
+  }
+
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(191,155,98,0.08)';
+  const tickColor = isDark ? '#7e8a9e' : '#8a90a0';
+
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        borderColor: '#c49a5a',
+        backgroundColor: isDark
+          ? 'rgba(196,154,90,0.06)'
+          : 'rgba(191,155,98,0.08)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHoverRadius: 6,
+        pointHoverBackgroundColor: '#c49a5a',
+        pointHoverBorderColor: '#fff',
+        pointHoverBorderWidth: 2,
+        borderWidth: 2.5,
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false }, tooltip: { 
+        backgroundColor: isDark ? '#1a1e2c' : '#0f172a',
+        titleFont: { family: 'Inter', size: 12 },
+        bodyFont: { family: 'IBM Plex Mono', size: 12 },
+        padding: 10,
+        cornerRadius: 8,
+        displayColors: false,
+      }},
+      scales: {
+        y: { grid: { color: gridColor }, ticks: { color: tickColor, font: { family: 'IBM Plex Mono', size: 11 } } },
+        x: { grid: { display: false }, ticks: { color: tickColor, font: { family: 'IBM Plex Mono', size: 11 } } }
+      },
+      interaction: { intersect: false, mode: 'index' },
+    }
+  });
+</script>
+{% endif %}
+{% endblock %}

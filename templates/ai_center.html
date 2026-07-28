@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}AI Command Center — {{ settings.business_name }}{% endblock %}
+
+{% block content %}
+<div class="page-header" style="margin-bottom:20px;">
+  <h1>AI Command Center</h1>
+  <p class="page-sub">Autonomous inventory intelligence — 100% offline</p>
+</div>
+
+<!-- Status Bar -->
+<div class="ai-status-bar" id="ai-status-bar">
+  <span class="ai-status-dot"></span>
+  <span class="ai-status-label">AI Agent Online</span>
+  <span class="ai-stat ai-stat--critical" id="stat-critical">⚠ <span id="count-critical">–</span> Critical</span>
+  <span class="ai-stat ai-stat--warning"  id="stat-warning">⚡ <span id="count-warning">–</span> Warning</span>
+  <span class="ai-stat ai-stat--safe"     id="stat-safe">✓ <span id="count-safe">–</span> Safe</span>
+  <span class="ai-status-meta" id="ai-analyzed-at">Analyzing...</span>
+</div>
+
+<!-- NLP Command Bar -->
+<div class="ai-command-bar">
+  <span class="ai-cmd-icon">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
+      <line x1="9" y1="21" x2="15" y2="21"/>
+    </svg>
+  </span>
+  <input type="text" id="nlp-input" placeholder="Ask AI anything… (e.g. 'show low stock', 'sales today', 'restock', 'help')" autocomplete="off">
+  <button class="ai-cmd-send" id="nlp-send-btn" title="Send">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="22" y1="2" x2="11" y2="13"/>
+      <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+    </svg>
+  </button>
+</div>
+<div class="nlp-tips-row" id="ai-nlp-suggestions" style="margin-top:-22px; margin-bottom:28px; font-size:11.5px; color:var(--text-2); padding-left:4px; transition: opacity 0.3s ease;">
+  💡 Try asking: <span id="suggestion-link" style="color:var(--brass-deep); cursor:pointer; font-weight:600; text-decoration:underline; text-underline-offset:2px;">"show low stock"</span>
+</div>
+<div class="ai-nlp-response" id="nlp-response"></div>
+
+<!-- Main Layout Columns -->
+<div class="ai-columns-layout">
+  
+  <!-- Left Column: Critical Status & Restocking Operations -->
+  <div class="ai-column">
+    
+    <!-- Stock Health -->
+    <div class="ai-panel">
+      <div class="ai-section-title">
+        📊 Stock Health Overview
+        <span class="ai-section-badge" id="health-badge">PREDICTIVE</span>
+      </div>
+      <div class="stock-health-grid" id="stock-health-grid">
+        <div class="ai-skeleton" style="height:80px;"></div>
+        <div class="ai-skeleton" style="height:80px;"></div>
+        <div class="ai-skeleton" style="height:80px;"></div>
+      </div>
+    </div>
+
+    <!-- Restocking Recommendations -->
+    <div class="ai-panel">
+      <div class="ai-section-title">
+        🔄 Restocking Queue
+        <span class="ai-section-badge" id="restock-badge">AI RECOMMENDED</span>
+      </div>
+      <div class="table-wrap">
+        <table class="restock-table" id="restock-table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th style="text-align:right;">Stock</th>
+              <th style="text-align:right;">Order Qty</th>
+              <th style="text-align:right;">Est. Cost</th>
+              <th style="text-align:right;">Days Left</th>
+            </tr>
+          </thead>
+          <tbody id="restock-tbody">
+            <tr><td colspan="5"><div class="ai-skeleton"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:16px;">
+        <button class="btn btn-brass" id="generate-po-btn" style="width:100%;">🤖 Auto-Generate Purchase Orders</button>
+      </div>
+    </div>
+
+    <!-- Dead Stock -->
+    <div class="ai-panel">
+      <div class="ai-section-title">
+        💀 Dead Stock
+        <span class="ai-section-badge" id="dead-badge">0 ITEMS</span>
+      </div>
+      <ul class="dead-stock-list" id="dead-stock-grid">
+        <li><div class="ai-skeleton" style="width:100%;"></div></li>
+      </ul>
+    </div>
+
+    <!-- Slow Moving -->
+    <div class="ai-panel">
+      <div class="ai-section-title">
+        🐌 Slow-Moving Products
+        <span class="ai-section-badge" id="slow-badge">0 ITEMS</span>
+      </div>
+      <ul class="dead-stock-list" id="slow-stock-grid">
+        <li><div class="ai-skeleton" style="width:100%;"></div></li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- Right Column: Forecasting & Administrative Analytics -->
+  <div class="ai-column">
+    
+    <!-- Demand Forecast -->
+    <div class="ai-panel">
+      <div class="ai-section-title">
+        📈 Demand Forecast
+        <span class="ai-section-badge">TOP PRODUCTS</span>
+      </div>
+      <div class="table-wrap">
+        <table class="restock-table" id="demand-table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th style="text-align:right;">Daily</th>
+              <th style="text-align:right;">Weekly</th>
+              <th style="text-align:right;">Monthly</th>
+              <th style="text-align:center;">Method</th>
+            </tr>
+          </thead>
+          <tbody id="demand-tbody">
+            <tr><td colspan="5"><div class="ai-skeleton"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Anomaly Detection -->
+    <div class="ai-panel">
+      <div class="ai-section-title">
+        🔍 Anomaly & Fraud Detection
+        <span class="ai-section-badge" id="anomaly-badge">SCANNING</span>
+      </div>
+      <ul class="anomaly-timeline" id="anomaly-list">
+        <li><div class="ai-skeleton" style="width:100%;"></div></li>
+      </ul>
+    </div>
+
+    <!-- Warehouse Overview -->
+    <div class="ai-panel">
+      <div class="ai-section-title">
+        🏭 Warehouse Distribution
+      </div>
+      <div id="warehouse-info" style="font-size:12.5px; color:var(--text-2);">
+        <div class="ai-skeleton" style="height:40px;"></div>
+      </div>
+    </div>
+
+    <!-- Agent Activity Log -->
+    <div class="ai-panel">
+      <div class="ai-section-title">
+        🤖 Agent Activity Log
+      </div>
+      <ul class="agent-log" id="agent-log">
+        <li><div class="ai-skeleton" style="width:100%;"></div></li>
+      </ul>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- Purchase Orders spanning full width at bottom -->
+<div class="ai-panel ai-panel--full">
+  <div class="ai-section-title">
+    📋 Purchase Orders
+    <span class="ai-section-badge" id="po-badge">DRAFTS</span>
+  </div>
+  <div class="po-card-grid" id="po-grid">
+    <p style="font-size:12px; color:var(--text-2);">No purchase orders generated yet. Click "Auto-Generate" to create PO drafts.</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>window.CURRENCY = "{{ settings.currency_symbol }}";</script>
+<script src="{{ url_for('static', filename='js/ai_center.js') }}"></script>
+{% endblock %}

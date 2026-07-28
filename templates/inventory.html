@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Inventory{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <span class="eyebrow">Stock room</span>
+    <h1>Inventory</h1>
+    <p>{{ products|length }} item{{ 's' if products|length != 1 else '' }} on record.</p>
+  </div>
+  <div class="page-head-actions" style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a href="{{ url_for('scanner_page') }}" class="btn btn-brass">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="5"/><rect x="16" y="3" width="5" height="5"/><rect x="3" y="16" width="5" height="5"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/></svg>
+      Fast Scanner
+    </a>
+    <a href="{{ url_for('inventory_add') }}" class="btn btn-primary">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      Add item
+    </a>
+  </div>
+</div>
+
+<!-- Expiry Alert Bar -->
+<div id="expiry-alert-bar" style="display:none;" class="card" style="border-left:4px solid #f59e0b;padding:12px 16px;margin-bottom:16px;background:linear-gradient(90deg,rgba(251,191,36,.08),transparent);">
+  <div style="font-weight:600;font-size:13px;margin-bottom:6px;">⚠️ Expiry Alerts</div>
+  <div id="expiry-alert-items" style="font-size:12px;display:flex;flex-wrap:wrap;gap:6px;"></div>
+</div>
+
+<form method="get" style="margin-bottom:18px; max-width:380px;">
+  <input type="text" name="q" value="{{ query }}" placeholder="Search by name or code&hellip;">
+</form>
+
+{% if products %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th>Category</th>
+        <th>Brand</th>
+        <th>Code</th>
+        <th class="num">Price</th>
+        <th class="num">Stock</th>
+        <th>Status</th>
+        <th>Expiry</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in products %}
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px;">
+            {% if p.image_url %}
+            <img src="/inventory/image_proxy?url={{ p.image_url | urlencode }}"
+                 onerror="this.style.display='none'"
+                 style="width:32px;height:32px;border-radius:6px;object-fit:cover;flex-shrink:0;"
+                 alt="">
+            {% endif %}
+            <div>
+              <div class="row-name">{{ p.name }}</div>
+              {% if p.manufacturer %}<div style="font-size:11px;color:var(--muted);">{{ p.manufacturer }}</div>{% endif %}
+            </div>
+          </div>
+        </td>
+        <td class="row-sub">{{ p.category }}</td>
+        <td class="row-sub">{{ p.brand or '—' }}</td>
+        <td class="mono row-sub">{{ p.code_value or '—' }}</td>
+        <td class="num">{{ settings.currency_symbol }}{{ "%.2f"|format(p.unit_price) }}</td>
+        <td class="num">{{ p.stock_qty|round(1) }} {{ p.unit_label }}</td>
+        <td>
+          {% if p.stock_qty <= 0 %}
+            <span class="badge badge-danger">Out of stock</span>
+          {% elif p.stock_qty <= p.reorder_level %}
+            <span class="badge badge-warn">Low stock</span>
+          {% else %}
+            <span class="badge badge-ok">In stock</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if p.expiry_date %}
+            <span class="expiry-cell" data-expiry="{{ p.expiry_date }}">{{ p.expiry_date }}</span>
+          {% else %}
+            <span style="color:var(--muted);font-size:12px;">—</span>
+          {% endif %}
+        </td>
+        <td style="text-align:right; white-space:nowrap;">
+          <a href="{{ url_for('inventory_edit', product_id=p.id) }}" class="btn btn-ghost btn-sm">Edit</a>
+          <form method="post" action="{{ url_for('inventory_delete', product_id=p.id) }}" style="display:inline;"
+                onsubmit="return confirm('Remove {{ p.name }} from inventory?');">
+            <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--danger);">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <span class="eyebrow">Nothing yet</span>
+  <h2>{{ ('No items match "' + query + '"') if query else 'No items in inventory yet' }}</h2>
+  <p>{{ 'Try a different search term.' if query else "Add your first product, or scan one in with the Fast Scanner." }}</p>
+  {% if not query %}
+  <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;">
+    <a href="{{ url_for('scanner_page') }}" class="btn btn-brass">⚡ Fast Scanner</a>
+    <a href="{{ url_for('inventory_add') }}" class="btn btn-primary">+ Add manually</a>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<style>
+.expiry-cell { font-size:12px; font-weight:600; padding:2px 8px; border-radius:8px; }
+.expiry-cell.fresh    { background:#d1fae5; color:#065f46; }
+.expiry-cell.near     { background:#fef3c7; color:#92400e; }
+.expiry-cell.expired  { background:#fee2e2; color:#991b1b; }
+[data-theme="dark"] .expiry-cell.fresh   { background:#064e3b; color:#6ee7b7; }
+[data-theme="dark"] .expiry-cell.near    { background:#451a03; color:#fcd34d; }
+[data-theme="dark"] .expiry-cell.expired { background:#450a0a; color:#fca5a5; }
+</style>
+<script>
+(function () {
+  // Color-code expiry cells
+  const cells = document.querySelectorAll(".expiry-cell[data-expiry]");
+  const alerts = [];
+  cells.forEach(cell => {
+    const dateStr = cell.dataset.expiry;
+    if (!dateStr) return;
+    try {
+      const expiry = new Date(dateStr);
+      const today  = new Date();
+      const days   = Math.round((expiry - today) / 864e5);
+      if (days < 0) {
+        cell.classList.add("expired");
+        cell.title = `Expired ${Math.abs(days)} days ago`;
+        alerts.push({ text: cell.closest("tr").querySelector(".row-name").textContent.trim(), days, cls: "expired" });
+      } else if (days <= 30) {
+        cell.classList.add("near");
+        cell.title = `Expires in ${days} days`;
+        if (days <= 7) alerts.push({ text: cell.closest("tr").querySelector(".row-name").textContent.trim(), days, cls: "near" });
+      } else {
+        cell.classList.add("fresh");
+        cell.title = `Fresh · ${days} days remaining`;
+      }
+    } catch (e) {}
+  });
+
+  // Show expiry alert bar
+  if (alerts.length > 0) {
+    const bar = document.getElementById("expiry-alert-bar");
+    const items = document.getElementById("expiry-alert-items");
+    if (bar && items) {
+      bar.style.display = "block";
+      items.innerHTML = alerts.map(a => {
+        const label = a.days < 0 ? `Expired ${Math.abs(a.days)}d ago` : `Expires in ${a.days}d`;
+        return `<span style="background:${a.cls === 'expired' ? '#fee2e2' : '#fef3c7'};color:${a.cls === 'expired' ? '#991b1b' : '#92400e'};padding:2px 8px;border-radius:6px;font-size:11px;">${a.text} · ${label}</span>`;
+      }).join("");
+    }
+  }
+})();
+</script>
+{% endblock %}

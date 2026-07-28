@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <span class="eyebrow">Performance</span>
+    <h1>Reports</h1>
+    <p>Sales trend, top products, and category performance.</p>
+  </div>
+  <div class="page-head-actions">
+    <select id="range-select">
+      <option value="7">Last 7 days</option>
+      <option value="30" selected>Last 30 days</option>
+      <option value="90">Last 90 days</option>
+    </select>
+    <a href="{{ url_for('reports_export') }}" class="btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      Export CSV
+    </a>
+  </div>
+</div>
+
+<div class="stat-grid stat-grid--three-cols">
+  <div class="stat-card">
+    <div class="stat-label">Revenue</div>
+    <div class="stat-value" id="stat-revenue">{{ settings.currency_symbol }}0.00</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Orders</div>
+    <div class="stat-value" id="stat-orders">0</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Average order value</div>
+    <div class="stat-value" id="stat-avg">{{ settings.currency_symbol }}0.00</div>
+  </div>
+</div>
+
+<div class="chart-card">
+  <div class="section-title" style="margin:0 0 10px;"><h2>Revenue trend</h2></div>
+  <canvas id="trendChart" height="90"></canvas>
+</div>
+
+<div class="report-grid">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Product</th><th class="num">Units sold</th><th class="num">Revenue</th></tr></thead>
+      <tbody id="top-products-body"></tbody>
+    </table>
+  </div>
+  <div class="chart-card" style="margin-bottom:0;">
+    <div class="section-title" style="margin:0 0 10px;"><h2>By category</h2></div>
+    <canvas id="categoryChart" height="200"></canvas>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.min.js') }}"></script>
+<script>window.CURRENCY = {{ settings.currency_symbol|tojson }};</script>
+<script src="{{ url_for('static', filename='js/reports.js') }}"></script>
+{% endblock %}
