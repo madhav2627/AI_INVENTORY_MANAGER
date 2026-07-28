@@ -105,13 +105,13 @@ def register():
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
         username = request.form.get("username", "").strip().lower()
-        password = request.form.get("password", "").strip()
-        confirm_password = request.form.get("confirm_password", "").strip()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
         
         if not username or not password:
             flash("Username and password are required.", "danger")
         elif password != confirm_password:
-            flash("Passwords do not match.", "danger")
+            flash("Passwords do not match. Please make sure both password fields are identical.", "danger")
         else:
             conn = db.get_connection()
             existing = db.get_user_by_username(conn, username)

@@ -134,7 +134,7 @@
   /* Header Branding */
   .auth-header {
     text-align: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1.75rem;
   }
 
   .brand-icon-box {
@@ -205,6 +205,7 @@
   /* Input Fields */
   .form-group {
     margin-bottom: 1.15rem;
+    position: relative;
   }
 
   .field-label {
@@ -235,7 +236,7 @@
 
   .input-control {
     width: 100%;
-    padding: 0.8rem 1rem 0.8rem 2.85rem;
+    padding: 0.8rem 2.85rem 0.8rem 2.85rem;
     font-size: 0.95rem;
     font-family: inherit;
     color: #0f172a !important;
@@ -258,8 +259,53 @@
     box-shadow: 0 0 0 4px rgba(191, 155, 98, 0.18), 0 2px 4px rgba(0, 0, 0, 0.03) !important;
   }
 
+  .input-control.is-invalid {
+    border-color: #ef4444 !important;
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15) !important;
+  }
+
+  .input-control.is-valid {
+    border-color: #10b981 !important;
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15) !important;
+  }
+
   .input-container:focus-within .field-icon {
     color: #bf9b62;
+  }
+
+  .pwd-toggle-btn {
+    position: absolute;
+    right: 12px;
+    background: transparent;
+    border: none;
+    color: #64748b;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s, background-color 0.2s;
+  }
+
+  .pwd-toggle-btn:hover {
+    color: #0f172a;
+    background-color: #f1f5f9;
+  }
+
+  .match-hint {
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-top: 4px;
+    display: none;
+  }
+  .match-hint.error {
+    color: #dc2626;
+    display: block;
+  }
+  .match-hint.success {
+    color: #16a34a;
+    display: block;
   }
 
   /* Submit Action Button */
@@ -346,7 +392,6 @@
 <body class="auth-page">
 
 <script>
-  // Ensure document theme remains light on auth screens
   document.documentElement.setAttribute('data-theme', 'light');
 </script>
 
@@ -385,7 +430,7 @@
       {% endif %}
     {% endwith %}
 
-    <form method="POST" action="{{ url_for('register') }}">
+    <form method="POST" action="{{ url_for('register') }}" id="registerForm">
       <div class="form-group">
         <label for="full_name" class="field-label">Full Name</label>
         <div class="input-container">
@@ -422,6 +467,12 @@
               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
             </svg>
           </span>
+          <button type="button" class="pwd-toggle-btn" id="togglePwd1" title="Toggle password visibility">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -435,10 +486,17 @@
               <polyline points="22 4 12 14.01 9 11.01"/>
             </svg>
           </span>
+          <button type="button" class="pwd-toggle-btn" id="togglePwd2" title="Toggle password visibility">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
         </div>
+        <div class="match-hint" id="matchHint"></div>
       </div>
 
-      <button type="submit" class="submit-btn">
+      <button type="submit" class="submit-btn" id="submitBtn">
         <span>Create Account</span>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="5" y1="12" x2="19" y2="12"/>
@@ -456,5 +514,59 @@
   </div>
 </div>
 
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const pwd1 = document.getElementById('password');
+    const pwd2 = document.getElementById('confirm_password');
+    const toggle1 = document.getElementById('togglePwd1');
+    const toggle2 = document.getElementById('togglePwd2');
+    const hint = document.getElementById('matchHint');
+    const form = document.getElementById('registerForm');
+
+    function setupToggle(input, btn) {
+      if (input && btn) {
+        btn.addEventListener('click', function() {
+          const isPassword = input.getAttribute('type') === 'password';
+          input.setAttribute('type', isPassword ? 'text' : 'password');
+          btn.style.color = isPassword ? '#bf9b62' : '#64748b';
+        });
+      }
+    }
+    setupToggle(pwd1, toggle1);
+    setupToggle(pwd2, toggle2);
+
+    function checkMatch() {
+      if (!pwd2.value) {
+        hint.className = 'match-hint';
+        pwd2.classList.remove('is-invalid', 'is-valid');
+        return true;
+      }
+      if (pwd1.value !== pwd2.value) {
+        hint.textContent = 'Passwords do not match';
+        hint.className = 'match-hint error';
+        pwd2.classList.add('is-invalid');
+        pwd2.classList.remove('is-valid');
+        return false;
+      } else {
+        hint.textContent = 'Passwords match!';
+        hint.className = 'match-hint success';
+        pwd2.classList.add('is-valid');
+        pwd2.classList.remove('is-invalid');
+        return true;
+      }
+    }
+
+    if (pwd1 && pwd2) {
+      pwd1.addEventListener('input', checkMatch);
+      pwd2.addEventListener('input', checkMatch);
+      form.addEventListener('submit', function(e) {
+        if (!checkMatch()) {
+          e.preventDefault();
+          pwd2.focus();
+        }
+      });
+    }
+  });
+</script>
 </body>
 </html>
