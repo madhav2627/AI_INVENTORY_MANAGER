@@ -1,8 +1,9 @@
-Flask==3.0.3
-qrcode==7.4.2
-python-barcode==0.15.1
-Pillow==10.4.0
-pandas==2.2.2
-scikit-learn==1.5.1
-joblib==1.4.2
-gunicorn==22.0.0
+Flask>=3.0.0
+qrcode>=7.4.0
+python-barcode>=0.15.0
+Pillow>=10.0.0
+numpy
+pandas
+scikit-learn
+joblib
+gunicorn
