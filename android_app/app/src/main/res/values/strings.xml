@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">AI Inventory Manager</string>
+    <!-- Replace this URL with your deployed Render URL or local URL -->
+    <string name="default_web_url">https://ai-inventory-manager.onrender.com</string>
+</resources>
