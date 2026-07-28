@@ -3,181 +3,488 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<script>
-  (function () {
-    var saved = localStorage.getItem('ai-inventory-theme') || localStorage.getItem('ledger-theme');
-    if (saved === 'dark' || (!saved && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    } else {
-      document.documentElement.setAttribute('data-theme', 'light');
-    }
-  })();
-</script>
 <title>Login &middot; AI INVENTORY MANAGER</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 <style>
-  body {
+  :root {
+    --auth-bg-1: #ffffff;
+    --auth-bg-2: #f8fafc;
+    --auth-card-bg: rgba(255, 255, 255, 0.92);
+    --auth-text-main: #0f172a;
+    --auth-text-muted: #64748b;
+    --auth-primary-start: #2563eb;
+    --auth-primary-end: #1d4ed8;
+    --auth-accent: #3b82f6;
+  }
+
+  body.auth-body {
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
-    margin: 0;
-    background: var(--bg-surface, #f8fafc);
-    font-family: inherit;
+    background: #ffffff;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--auth-text-main);
+    position: relative;
+    overflow-x: hidden;
   }
-  .auth-card {
+
+  /* Animated background graphics */
+  .bg-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
     width: 100%;
-    max-width: 400px;
-    padding: 2.5rem;
-    background: var(--bg-card, #ffffff);
-    border: 1px solid var(--border-color, #e2e8f0);
-    border-radius: 16px;
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+    background: 
+      radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.08) 0%, transparent 40%),
+      radial-gradient(circle at 90% 80%, rgba(191, 155, 98, 0.08) 0%, transparent 40%),
+      radial-gradient(circle at 50% 50%, rgba(241, 245, 249, 0.5) 0%, #ffffff 100%);
   }
+
+  .floating-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(50px);
+    opacity: 0.6;
+    animation: floatOrb 18s ease-in-out infinite alternate;
+  }
+  .orb-1 {
+    width: 320px;
+    height: 320px;
+    background: rgba(37, 99, 235, 0.12);
+    top: -60px;
+    left: -60px;
+  }
+  .orb-2 {
+    width: 380px;
+    height: 380px;
+    background: rgba(191, 155, 98, 0.12);
+    bottom: -80px;
+    right: -80px;
+    animation-delay: -9s;
+  }
+  .orb-3 {
+    width: 250px;
+    height: 250px;
+    background: rgba(99, 102, 241, 0.08);
+    top: 40%;
+    right: 15%;
+    animation-delay: -4s;
+  }
+
+  @keyframes floatOrb {
+    0% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(30px, 40px) scale(1.08); }
+    100% { transform: translate(-20px, 20px) scale(0.95); }
+  }
+
+  /* Grid overlay pattern */
+  .grid-pattern {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px);
+    background-size: 24px 24px;
+    opacity: 0.6;
+  }
+
+  /* Card wrapper with entrance animation */
+  .auth-container {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 420px;
+    padding: 1.5rem;
+    box-sizing: border-box;
+    animation: fadeInUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(24px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .auth-card {
+    background: var(--auth-card-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    border-radius: 24px;
+    padding: 2.75rem 2.25rem;
+    box-shadow: 
+      0 20px 40px -15px rgba(15, 23, 42, 0.07),
+      0 0 0 1px rgba(255, 255, 255, 0.8) inset,
+      0 10px 20px -5px rgba(37, 99, 235, 0.04);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .auth-card:hover {
+    box-shadow: 
+      0 25px 50px -12px rgba(15, 23, 42, 0.1),
+      0 0 0 1px rgba(255, 255, 255, 0.9) inset,
+      0 12px 24px -6px rgba(37, 99, 235, 0.08);
+  }
+
+  /* Brand Header */
   .auth-header {
     text-align: center;
-    margin-bottom: 2rem;
+    margin-bottom: 2.25rem;
   }
-  .auth-header .brand-icon {
+
+  .brand-badge {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 52px;
-    height: 52px;
-    border-radius: 12px;
-    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-    color: white;
-    margin-bottom: 1rem;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+    width: 60px;
+    height: 60px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 50%, #1e40af 100%);
+    color: #ffffff;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 10px 20px -5px rgba(37, 99, 235, 0.35);
+    position: relative;
+    animation: pulseBadge 3s ease-in-out infinite;
   }
-  .auth-header h1 {
+
+  @keyframes pulseBadge {
+    0%, 100% { transform: scale(1); box-shadow: 0 10px 20px -5px rgba(37, 99, 235, 0.35); }
+    50% { transform: scale(1.04); box-shadow: 0 14px 28px -4px rgba(37, 99, 235, 0.45); }
+  }
+
+  .brand-badge svg {
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.15));
+  }
+
+  .auth-title {
     font-size: 1.35rem;
-    font-weight: 700;
-    margin: 0 0 0.25rem 0;
-    color: var(--text-main, #0f172a);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: #0f172a;
+    margin: 0 0 0.4rem 0;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
-  .auth-header p {
+
+  .auth-subtitle {
     font-size: 0.875rem;
-    color: var(--text-muted, #64748b);
+    color: #64748b;
     margin: 0;
-  }
-  .form-group {
-    margin-bottom: 1.25rem;
-  }
-  .form-group label {
-    display: block;
-    font-size: 0.875rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: var(--text-main, #334155);
-  }
-  .form-control {
-    width: 100%;
-    padding: 0.75rem 1rem;
-    font-size: 0.95rem;
-    border-radius: 8px;
-    border: 1px solid var(--border-color, #cbd5e1);
-    background: var(--bg-input, #ffffff);
-    color: var(--text-main, #0f172a);
-    box-sizing: border-box;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .form-control:focus {
-    outline: none;
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
-  }
-  .btn-submit {
-    width: 100%;
-    padding: 0.85rem;
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: white;
-    background: linear-gradient(135deg, #2563eb, #1d4ed8);
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
-    transition: transform 0.1s, opacity 0.2s;
-  }
-  .btn-submit:hover {
-    opacity: 0.95;
-  }
-  .btn-submit:active {
-    transform: scale(0.99);
-  }
-  .auth-footer {
-    margin-top: 1.5rem;
-    text-align: center;
-    font-size: 0.875rem;
-    color: var(--text-muted, #64748b);
-  }
-  .auth-footer a {
-    color: #2563eb;
-    text-decoration: none;
-    font-weight: 600;
-  }
-  .auth-footer a:hover {
-    text-decoration: underline;
-  }
-  .flash-alert {
-    padding: 0.75rem 1rem;
-    border-radius: 8px;
-    margin-bottom: 1.25rem;
-    font-size: 0.875rem;
     font-weight: 500;
   }
+
+  /* Flash alerts */
+  .flash-stack {
+    margin-bottom: 1.5rem;
+  }
+  .flash-alert {
+    padding: 0.85rem 1rem;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    animation: fadeIn 0.3s ease-out;
+  }
   .flash-danger {
-    background: rgba(239, 68, 68, 0.1);
-    color: #dc2626;
-    border: 1px solid rgba(239, 68, 68, 0.2);
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
   }
   .flash-success {
-    background: rgba(34, 197, 94, 0.1);
-    color: #16a34a;
-    border: 1px solid rgba(34, 197, 94, 0.2);
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Form Elements */
+  .form-group {
+    margin-bottom: 1.35rem;
+    position: relative;
+  }
+
+  .form-label {
+    display: block;
+    font-size: 0.825rem;
+    font-weight: 600;
+    color: #334155;
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.01em;
+  }
+
+  .input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .input-icon {
+    position: absolute;
+    left: 14px;
+    color: #94a3b8;
+    transition: color 0.2s ease;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .form-input {
+    width: 100%;
+    padding: 0.8rem 1rem 0.8rem 2.75rem;
+    font-size: 0.925rem;
+    font-family: inherit;
+    color: #0f172a;
+    background: #ffffff;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 12px;
+    box-sizing: border-box;
+    outline: none;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  }
+
+  .form-input::placeholder {
+    color: #94a3b8;
+  }
+
+  .form-input:focus {
+    border-color: #2563eb;
+    background: #ffffff;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12), 0 2px 4px rgba(0, 0, 0, 0.02);
+  }
+
+  .form-input:focus + .input-icon,
+  .input-wrapper:focus-within .input-icon {
+    color: #2563eb;
+  }
+
+  .toggle-password {
+    position: absolute;
+    right: 12px;
+    background: none;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: color 0.2s ease, background-color 0.2s ease;
+  }
+
+  .toggle-password:hover {
+    color: #334155;
+    background-color: #f1f5f9;
+  }
+
+  /* Submit Button */
+  .btn-submit {
+    width: 100%;
+    padding: 0.9rem 1.5rem;
+    margin-top: 0.75rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: #ffffff;
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    box-shadow: 0 8px 16px -4px rgba(37, 99, 235, 0.35);
+    position: relative;
+    overflow: hidden;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn-submit::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(
+      60deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.25) 50%,
+      transparent 70%
+    );
+    transform: rotate(30deg) translateY(-100%);
+    transition: transform 0.8s ease;
+  }
+
+  .btn-submit:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 24px -4px rgba(37, 99, 235, 0.45);
+    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  }
+
+  .btn-submit:hover::after {
+    transform: rotate(30deg) translateY(100%);
+  }
+
+  .btn-submit:active {
+    transform: translateY(0);
+    box-shadow: 0 4px 8px -2px rgba(37, 99, 235, 0.3);
+  }
+
+  /* Auth Footer */
+  .auth-footer {
+    margin-top: 1.75rem;
+    padding-top: 1.25rem;
+    border-top: 1.5px solid #f1f5f9;
+    text-align: center;
+    font-size: 0.875rem;
+    color: #64748b;
+  }
+
+  .auth-link {
+    color: #2563eb;
+    font-weight: 600;
+    text-decoration: none;
+    transition: color 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .auth-link:hover {
+    color: #1d4ed8;
+    text-decoration: underline;
+  }
+
+  .auth-link svg {
+    transition: transform 0.2s ease;
+  }
+
+  .auth-link:hover svg {
+    transform: translateX(3px);
   }
 </style>
 </head>
-<body>
+<body class="auth-body">
 
-<div class="auth-card">
-  <div class="auth-header">
-    <div class="brand-icon">
-      <svg viewBox="0 0 32 32" width="28" height="28" fill="none">
-        <rect x="3" y="6" width="26" height="20" rx="2" stroke="currentColor" stroke-width="2.2"/>
-        <line x1="3" y1="12" x2="29" y2="12" stroke="currentColor" stroke-width="2.2"/>
-        <line x1="8" y1="18" x2="16" y2="18" stroke="currentColor" stroke-width="2.2"/>
-      </svg>
+<div class="bg-canvas">
+  <div class="grid-pattern"></div>
+  <div class="floating-orb orb-1"></div>
+  <div class="floating-orb orb-2"></div>
+  <div class="floating-orb orb-3"></div>
+</div>
+
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="auth-header">
+      <div class="brand-badge">
+        <svg viewBox="0 0 32 32" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="6" width="26" height="20" rx="3"/>
+          <line x1="3" y1="12" x2="29" y2="12"/>
+          <line x1="8" y1="18" x2="16" y2="18"/>
+          <circle cx="23" cy="18" r="1.5" fill="currentColor"/>
+        </svg>
+      </div>
+      <h1 class="auth-title">AI INVENTORY MANAGER</h1>
+      <p class="auth-subtitle">Sign in to access your inventory portal</p>
     </div>
-    <h1>AI INVENTORY MANAGER</h1>
-    <p>Sign in to your account</p>
-  </div>
 
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      {% for category, message in messages %}
-        <div class="flash-alert flash-{{ category }}">{{ message }}</div>
-      {% endfor %}
-    {% endif %}
-  {% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flash-stack">
+          {% for category, message in messages %}
+            <div class="flash-alert flash-{{ category }}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              {{ message }}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
 
-  <form method="POST" action="{{ url_for('login') }}">
-    <div class="form-group">
-      <label for="username">Username</label>
-      <input type="text" id="username" name="username" class="form-control" placeholder="Enter username" required autofocus autocomplete="username">
+    <form method="POST" action="{{ url_for('login') }}">
+      <div class="form-group">
+        <label for="username" class="form-label">Username</label>
+        <div class="input-wrapper">
+          <input type="text" id="username" name="username" class="form-input" placeholder="Enter your username" required autofocus autocomplete="username">
+          <span class="input-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="password" class="form-label">Password</label>
+        <div class="input-wrapper">
+          <input type="password" id="password" name="password" class="form-input" placeholder="Enter your password" required autocomplete="current-password">
+          <span class="input-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </span>
+          <button type="button" class="toggle-password" id="togglePasswordBtn" title="Toggle password visibility">
+            <svg class="eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button type="submit" class="btn-submit">
+        <span>Sign In</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="5" y1="12" x2="19" y2="12"/>
+          <polyline points="12 5 19 12 12 19"/>
+        </svg>
+      </button>
+    </form>
+
+    <div class="auth-footer">
+      Don't have an account? 
+      <a href="{{ url_for('register') }}" class="auth-link">
+        Create Account
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </a>
     </div>
-    <div class="form-group">
-      <label for="password">Password</label>
-      <input type="password" id="password" name="password" class="form-control" placeholder="Enter password" required autocomplete="current-password">
-    </div>
-    <button type="submit" class="btn-submit">Sign In</button>
-  </form>
-
-  <div class="auth-footer">
-    Don't have an account? <a href="{{ url_for('register') }}">Create Account</a>
   </div>
 </div>
 
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const pwdInput = document.getElementById('password');
+    const toggleBtn = document.getElementById('togglePasswordBtn');
+    if (pwdInput && toggleBtn) {
+      toggleBtn.addEventListener('click', function() {
+        const isPassword = pwdInput.getAttribute('type') === 'password';
+        pwdInput.setAttribute('type', isPassword ? 'text' : 'password');
+        toggleBtn.style.color = isPassword ? '#2563eb' : '#94a3b8';
+      });
+    }
+  });
+</script>
 </body>
 </html>
