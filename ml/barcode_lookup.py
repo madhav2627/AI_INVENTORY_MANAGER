@@ -29,7 +29,7 @@ TIMEOUT = 5  # seconds per request
 def _fetch_open_food_facts(barcode: str) -> dict | None:
     url = f"https://world.openfoodfacts.org/api/v2/product/{barcode}.json"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "LedgerInventory/2.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "AIInventoryManager/2.0"})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             if resp.status != 200:
                 return None
@@ -119,7 +119,7 @@ def _guess_unit(weight: str, volume: str, quantity: str) -> str:
 def _fetch_upc_itemdb(barcode: str) -> dict | None:
     url = f"https://api.upcitemdb.com/prod/trial/lookup?upc={barcode}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "LedgerInventory/2.0", "Accept": "application/json"})
+        req = urllib.request.Request(url, headers={"User-Agent": "AIInventoryManager/2.0", "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             if resp.status != 200:
                 return None
@@ -170,7 +170,7 @@ def _fetch_opengtindb(barcode: str) -> dict | None:
     # Digit-eyes requires key; use Open EAN API instead
     url = f"https://ean-search.org/perl/api.pl?q={barcode}&lang=1&format=json"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "LedgerInventory/2.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "AIInventoryManager/2.0"})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             if resp.status != 200:
                 return None

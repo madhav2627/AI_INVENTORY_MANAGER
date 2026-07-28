@@ -14,8 +14,9 @@ import os
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    jsonify, send_file, flash, abort
+    jsonify, send_file, flash, abort, session, g
 )
+from werkzeug.security import check_password_hash
 
 import database as db
 from ml import train as ml_train
@@ -24,17 +25,117 @@ from ml import inventory_ai as ai_engine
 import codegen
 
 app = Flask(__name__)
-app.secret_key = "local-offline-billing-secret"
+app.secret_key = os.environ.get("SECRET_KEY", "ai-inventory-manager-secret-key-2026")
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap
+# Bootstrap & Authentication Middleware
 # ---------------------------------------------------------------------------
+
+OPEN_ENDPOINTS = {'login', 'register', 'static'}
 
 @app.before_request
-def ensure_db():
+def ensure_auth():
     if not os.path.exists(db.DB_PATH):
         db.init_db()
+        
+    endpoint = request.endpoint or ''
+    if endpoint in OPEN_ENDPOINTS or endpoint.startswith('static'):
+        return None
+        
+    user_id = session.get("user_id")
+    if not user_id:
+        return redirect(url_for("login"))
+        
+    conn = db.get_connection()
+    user = db.get_user_by_id(conn, user_id)
+    conn.close()
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+    g.user = user
+
+
+@app.context_processor
+def inject_user():
+    user = getattr(g, 'user', None)
+    if not user and session.get("user_id"):
+        try:
+            conn = db.get_connection()
+            user = db.get_user_by_id(conn, session.get("user_id"))
+            conn.close()
+        except Exception:
+            user = None
+    return dict(current_user=user)
+
+
+# ---------------------------------------------------------------------------
+# Auth Routes
+# ---------------------------------------------------------------------------
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("user_id"):
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        
+        conn = db.get_connection()
+        user = db.get_user_by_username(conn, username)
+        conn.close()
+        
+        if user and check_password_hash(user["password_hash"], password):
+            session["user_id"] = user["id"]
+            session["username"] = user["username"]
+            session["full_name"] = user["full_name"]
+            session["role"] = user["role"]
+            flash(f"Welcome back, {user['full_name'] or user['username']}!", "success")
+            return redirect(url_for("dashboard"))
+        else:
+            flash("Invalid username or password.", "danger")
+            
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if session.get("user_id"):
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        username = request.form.get("username", "").strip().lower()
+        password = request.form.get("password", "").strip()
+        confirm_password = request.form.get("confirm_password", "").strip()
+        
+        if not username or not password:
+            flash("Username and password are required.", "danger")
+        elif password != confirm_password:
+            flash("Passwords do not match.", "danger")
+        else:
+            conn = db.get_connection()
+            existing = db.get_user_by_username(conn, username)
+            if existing:
+                conn.close()
+                flash("Username is already taken.", "danger")
+            else:
+                user_id = db.create_user(conn, username, password, full_name, role="admin")
+                conn.close()
+                session["user_id"] = user_id
+                session["username"] = username
+                session["full_name"] = full_name
+                session["role"] = "admin"
+                flash("Account created successfully!", "success")
+                return redirect(url_for("dashboard"))
+                
+    return render_template("register.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    flash("You have been logged out.", "success")
+    return redirect(url_for("login"))
 
 
 def get_settings(conn):
@@ -1036,7 +1137,7 @@ if __name__ == "__main__":
 
     url = f"http://127.0.0.1:{port}/"
     print("\n" + "=" * 60)
-    print(f"  LEDGER SMART BILLING SYSTEM IS READY!")
+    print(f"  AI INVENTORY MANAGER IS READY!")
     print(f"  URL: {url}")
     if port != 5000:
         print(f"  [NOTE] Port 5000 was in use by another app.")

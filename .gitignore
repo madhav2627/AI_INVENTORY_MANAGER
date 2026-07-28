@@ -39,6 +39,7 @@ venv.bak/
 *.db
 *.sqlite
 *.sqlite3
+data/*.json
 !**/data/.gitkeep
 
 # IDEs & Editors

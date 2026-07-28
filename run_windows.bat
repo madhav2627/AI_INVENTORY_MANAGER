@@ -1,10 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
-title Ledger Startup Manager
+title AI INVENTORY MANAGER Startup Manager
 cd /d "%~dp0"
 
 echo ===================================================
-echo           LEDGER SMART BILLING SYSTEM
+echo             AI INVENTORY MANAGER
 echo ===================================================
 echo.
 

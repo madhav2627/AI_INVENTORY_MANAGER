@@ -5,6 +5,7 @@ next to the application and is created automatically on first run.
 """
 import sqlite3
 import os
+import json
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -164,12 +165,23 @@ CREATE TABLE IF NOT EXISTS expiry_alerts (
     created_at  TEXT NOT NULL
 );
 
+-- User authentication details
+CREATE TABLE IF NOT EXISTS users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    username        TEXT UNIQUE NOT NULL,
+    password_hash   TEXT NOT NULL,
+    full_name       TEXT DEFAULT '',
+    role            TEXT DEFAULT 'admin',
+    created_at      TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_txn_items_product ON transaction_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_txn_created ON transactions(created_at);
 CREATE INDEX IF NOT EXISTS idx_ai_log_created ON ai_agent_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_po_status ON purchase_orders(status);
 CREATE INDEX IF NOT EXISTS idx_barcode_cache ON barcode_cache(barcode);
 CREATE INDEX IF NOT EXISTS idx_expiry_alerts_product ON expiry_alerts(product_id);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 """
 
 DEFAULT_SETTINGS = {
@@ -209,6 +221,55 @@ def _migrate_products_columns(conn):
                 pass
 
 
+def seed_default_admin(conn):
+    """Ensure at least one admin account exists in local database and data/users.json."""
+    from werkzeug.security import generate_password_hash
+    user = conn.execute("SELECT * FROM users LIMIT 1").fetchone()
+    if not user:
+        pwd_hash = generate_password_hash("admin123")
+        created = now_iso()
+        conn.execute(
+            "INSERT INTO users (username, password_hash, full_name, role, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("admin", pwd_hash, "Administrator", "admin", created),
+        )
+        conn.commit()
+    sync_users_to_json(conn)
+
+
+def sync_users_to_json(conn):
+    """Sync user accounts to local JSON database (data/users.json) for redundancy."""
+    try:
+        json_path = os.path.join(BASE_DIR, "data", "users.json")
+        users = conn.execute("SELECT id, username, full_name, role, created_at FROM users").fetchall()
+        user_list = [dict(u) for u in users]
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(user_list, f, indent=2)
+    except Exception:
+        pass
+
+
+def get_user_by_username(conn, username):
+    return conn.execute("SELECT * FROM users WHERE username = ?", (username.strip().lower(),)).fetchone()
+
+
+def get_user_by_id(conn, user_id):
+    return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+def create_user(conn, username, password, full_name="", role="admin"):
+    from werkzeug.security import generate_password_hash
+    pwd_hash = generate_password_hash(password)
+    created = now_iso()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO users (username, password_hash, full_name, role, created_at) VALUES (?, ?, ?, ?, ?)",
+        (username.strip().lower(), pwd_hash, full_name.strip(), role, created),
+    )
+    conn.commit()
+    sync_users_to_json(conn)
+    return cursor.lastrowid
+
+
 def init_db():
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
     conn = get_connection()
@@ -219,6 +280,7 @@ def init_db():
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value)
         )
     conn.commit()
+    seed_default_admin(conn)
     conn.close()
 
 
