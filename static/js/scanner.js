@@ -96,21 +96,24 @@
         return html5Qr.start(
           { deviceId: { exact: cam.id } },
           {
-            fps: 15,
-            qrbox: { width: Math.min(260, window.innerWidth - 40), height: Math.min(260, window.innerWidth - 40) },
-            aspectRatio: 1.0,
+            fps: 25,
+            qrbox: { width: Math.min(300, window.innerWidth - 40), height: Math.min(180, window.innerHeight - 120) },
+            aspectRatio: 1.6,
             formatsToSupport: ALL_FORMATS,
           },
           (decodedText, result) => {
             if (!running || scanCooldown) return;
+            decodedText = (decodedText || "").trim().replace(/[\r\n\t]/g, "");
+            if (!decodedText) return;
+
             scanCooldown = true;
             running = false;
 
-            vibrate([200, 50, 100]);
+            vibrate([180, 40, 100]);
             playScanBeep(true);
 
             if (statusEl) {
-              statusEl.innerHTML = `<span class="scan-ok-badge">✓ Detected</span> ${decodedText}`;
+              statusEl.innerHTML = `<span class="scan-ok-badge">✓ Detected</span> <code>${decodedText}</code>`;
             }
             if (scanLine) scanLine.style.animationPlayState = "paused";
 
@@ -123,7 +126,6 @@
             if (!fastMode) {
               setTimeout(() => closeScanner(), 600);
             } else {
-              // In fast mode: brief pause then resume scanning
               setTimeout(() => {
                 scanCooldown = false;
                 running = true;

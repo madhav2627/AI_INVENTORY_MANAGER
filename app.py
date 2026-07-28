@@ -304,7 +304,6 @@ def inventory_barcode_lookup():
         "SELECT id, name, stock_qty FROM products WHERE (code_value = ? OR barcode_raw = ?) AND user_id = ?",
         (code, code, user_id)
     ).fetchone()
-    conn.close()
     if existing:
         return jsonify({
             "_duplicate": True,
@@ -312,8 +311,9 @@ def inventory_barcode_lookup():
             "_existing_name": existing["name"],
             "_existing_stock": existing["stock_qty"],
         })
+    force_ai = request.args.get("force", "").lower() in ["1", "true"]
     from ml.barcode_lookup import lookup_barcode
-    result = lookup_barcode(code)
+    result = lookup_barcode(code, force_ai=force_ai)
     return jsonify(result)
 
 

@@ -648,7 +648,8 @@
 
     setLoading(true);
 
-    fetch(`/inventory/barcode_lookup?code=${encodeURIComponent(code)}`)
+    const url = `/inventory/barcode_lookup?code=${encodeURIComponent(code)}${force ? '&force=1' : ''}`;
+    fetch(url)
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(data => {
         setLoading(false);
@@ -659,21 +660,21 @@
         }
 
         fillForm(data);
-        addToHistory(code, data.name);
+        addToHistory(code, data.name || "Scanned Barcode");
         scanSessionCount++;
 
         const countEl = el("scanner-session-count");
         if (countEl) { countEl.textContent = `Session: ${scanSessionCount} scan${scanSessionCount !== 1 ? "s" : ""}`; countEl.style.display = "block"; }
 
-        if (data._found) {
-          showToast(`🤖 Auto-filled: <strong>${data.name}</strong> <span style="opacity:.7;font-size:11px;">via ${data.source_db || "AI"}</span>`, "success");
+        if (data._found && data.name) {
+          showToast(`✅ Auto-filled: <strong>${data.name}</strong> <span style="opacity:.7;font-size:11px;">via ${data.source_db || "Open DB"}</span>`, "success");
         } else {
-          showToast(`⚠️ No product found for <code>${code}</code>. Please fill details manually.`);
+          showToast(`⚠️ Barcode <code>${code}</code> read cleanly, but details are not in public databases. Please enter product details below.`);
         }
       })
       .catch(() => {
         setLoading(false);
-        showToast("⚠️ Lookup failed. Check internet or fill manually.");
+        showToast("⚠️ Lookup failed. Check internet or enter details manually.");
       });
   }
 
