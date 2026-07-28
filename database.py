@@ -256,6 +256,7 @@ def _migrate_products_columns(conn):
 def seed_default_admin(conn):
     """Ensure at least one admin account exists in local database and data/users.json."""
     from werkzeug.security import generate_password_hash
+    restore_users_from_json(conn)
     user = conn.execute("SELECT * FROM users LIMIT 1").fetchone()
     if not user:
         pwd_hash = generate_password_hash("admin123")
@@ -272,7 +273,7 @@ def sync_users_to_json(conn):
     """Sync user accounts to local JSON database (data/users.json) for redundancy."""
     try:
         json_path = os.path.join(BASE_DIR, "data", "users.json")
-        users = conn.execute("SELECT id, username, full_name, role, created_at FROM users").fetchall()
+        users = conn.execute("SELECT id, username, password_hash, full_name, role, created_at FROM users").fetchall()
         user_list = [dict(u) for u in users]
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(user_list, f, indent=2)
@@ -280,8 +281,30 @@ def sync_users_to_json(conn):
         pass
 
 
+def restore_users_from_json(conn):
+    """Restore registered users from JSON backup if missing in SQLite."""
+    try:
+        json_path = os.path.join(BASE_DIR, "data", "users.json")
+        if not os.path.exists(json_path):
+            return
+        with open(json_path, "r", encoding="utf-8") as f:
+            user_list = json.load(f)
+        for u in user_list:
+            if u.get("username") and u.get("password_hash"):
+                conn.execute(
+                    "INSERT OR IGNORE INTO users (username, password_hash, full_name, role, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (u["username"].strip().lower(), u["password_hash"], u.get("full_name", ""), u.get("role", "admin"), u.get("created_at", now_iso()))
+                )
+        conn.commit()
+    except Exception:
+        pass
+
+
 def get_user_by_username(conn, username):
-    return conn.execute("SELECT * FROM users WHERE username = ?", (username.strip().lower(),)).fetchone()
+    if not username:
+        return None
+    cleaned = str(username).strip().lower()
+    return conn.execute("SELECT * FROM users WHERE LOWER(username) = ?", (cleaned,)).fetchone()
 
 
 def get_user_by_id(conn, user_id):
@@ -308,6 +331,7 @@ def init_db():
     conn.executescript(SCHEMA)
     _migrate_user_id_columns(conn)
     _migrate_products_columns(conn)
+    restore_users_from_json(conn)
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute(
             "INSERT OR IGNORE INTO settings (key, value, user_id) VALUES (?, ?, 1)", (key, value)

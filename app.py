@@ -79,21 +79,27 @@ def login():
         return redirect(url_for("dashboard"))
     if request.method == "POST":
         username = request.form.get("username", "").strip()
-        password = request.form.get("password", "").strip()
+        password = request.form.get("password", "")
         
+        if not username or not password:
+            flash("Please enter both username and password.", "danger")
+            return render_template("login.html")
+
         conn = db.get_connection()
         user = db.get_user_by_username(conn, username)
         conn.close()
         
-        if user and check_password_hash(user["password_hash"], password):
+        if not user:
+            flash(f"No account found with username '{username}'. Please check your spelling or create an account.", "danger")
+        elif not check_password_hash(user["password_hash"], password):
+            flash("Incorrect password. Please try again.", "danger")
+        else:
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["full_name"] = user["full_name"]
             session["role"] = user["role"]
             flash(f"Welcome back, {user['full_name'] or user['username']}!", "success")
             return redirect(url_for("dashboard"))
-        else:
-            flash("Invalid username or password.", "danger")
             
     return render_template("login.html")
 
@@ -117,7 +123,7 @@ def register():
             existing = db.get_user_by_username(conn, username)
             if existing:
                 conn.close()
-                flash("Username is already taken.", "danger")
+                flash(f"Username '{username}' is already taken. Please choose another username.", "danger")
             else:
                 user_id = db.create_user(conn, username, password, full_name, role="admin")
                 conn.close()
@@ -125,7 +131,7 @@ def register():
                 session["username"] = username
                 session["full_name"] = full_name
                 session["role"] = "admin"
-                flash("Account created successfully!", "success")
+                flash("Account created successfully! Welcome to AI INVENTORY MANAGER.", "success")
                 return redirect(url_for("dashboard"))
                 
     return render_template("register.html")
