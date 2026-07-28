@@ -28,22 +28,36 @@ def load_meta():
         return json.load(f)
 
 
-def _heuristic_demand(conn):
+def _heuristic_demand(conn, user_id=None):
     """
     Fallback used before there's enough history for the model: average
     daily sales over whatever history exists (minimum 1 day), per product.
     """
-    query = """
-        SELECT p.id AS product_id, p.name, p.stock_qty, p.reorder_level,
-               COALESCE(SUM(ti.quantity), 0) AS total_sold,
-               MIN(date(t.created_at)) AS first_sale,
-               MAX(date(t.created_at)) AS last_sale
-        FROM products p
-        LEFT JOIN transaction_items ti ON ti.product_id = p.id
-        LEFT JOIN transactions t ON t.id = ti.transaction_id
-        GROUP BY p.id
-    """
-    df = pd.read_sql_query(query, conn)
+    if user_id is not None:
+        query = """
+            SELECT p.id AS product_id, p.name, p.stock_qty, p.reorder_level,
+                   COALESCE(SUM(ti.quantity), 0) AS total_sold,
+                   MIN(date(t.created_at)) AS first_sale,
+                   MAX(date(t.created_at)) AS last_sale
+            FROM products p
+            LEFT JOIN transaction_items ti ON ti.product_id = p.id
+            LEFT JOIN transactions t ON t.id = ti.transaction_id AND t.user_id = ?
+            WHERE p.user_id = ?
+            GROUP BY p.id
+        """
+        df = pd.read_sql_query(query, conn, params=(user_id, user_id))
+    else:
+        query = """
+            SELECT p.id AS product_id, p.name, p.stock_qty, p.reorder_level,
+                   COALESCE(SUM(ti.quantity), 0) AS total_sold,
+                   MIN(date(t.created_at)) AS first_sale,
+                   MAX(date(t.created_at)) AS last_sale
+            FROM products p
+            LEFT JOIN transaction_items ti ON ti.product_id = p.id
+            LEFT JOIN transactions t ON t.id = ti.transaction_id
+            GROUP BY p.id
+        """
+        df = pd.read_sql_query(query, conn)
     results = {}
     for _, row in df.iterrows():
         if row["first_sale"] and row["last_sale"]:
@@ -100,7 +114,7 @@ def _model_demand(conn, meta):
     return results
 
 
-def get_intelligence(conn):
+def get_intelligence(conn, user_id=None):
     """
     Returns { product_id: {predicted_daily_demand, method, days_to_stockout,
     forecast_30day, stock_qty, reorder_level, name} } for every product.
@@ -115,11 +129,16 @@ def get_intelligence(conn):
             demand_by_product = {}
 
     if not demand_by_product:
-        demand_by_product = _heuristic_demand(conn)
+        demand_by_product = _heuristic_demand(conn, user_id)
 
-    products = conn.execute(
-        "SELECT id, name, stock_qty, reorder_level FROM products"
-    ).fetchall()
+    if user_id is not None:
+        products = conn.execute(
+            "SELECT id, name, stock_qty, reorder_level FROM products WHERE user_id = ?", (user_id,)
+        ).fetchall()
+    else:
+        products = conn.execute(
+            "SELECT id, name, stock_qty, reorder_level FROM products"
+        ).fetchall()
 
     output = {}
     for p in products:

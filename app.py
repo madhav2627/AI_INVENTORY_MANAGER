@@ -138,25 +138,45 @@ def logout():
     return redirect(url_for("login"))
 
 
-def get_settings(conn):
-    rows = conn.execute("SELECT key, value FROM settings").fetchall()
-    return {r["key"]: r["value"] for r in rows}
+def get_current_user_id():
+    if hasattr(g, 'user') and g.user:
+        return g.user["id"]
+    return session.get("user_id", 1)
 
 
-def next_invoice_number(conn, settings):
+def get_settings(conn, user_id=None):
+    if user_id is None:
+        user_id = get_current_user_id()
+    rows = conn.execute("SELECT key, value FROM settings WHERE user_id = ?", (user_id,)).fetchall()
+    settings_dict = {r["key"]: r["value"] for r in rows}
+    if not settings_dict:
+        for k, v in db.DEFAULT_SETTINGS.items():
+            conn.execute("INSERT OR REPLACE INTO settings (key, value, user_id) VALUES (?, ?, ?)", (k, v, user_id))
+        conn.commit()
+        rows = conn.execute("SELECT key, value FROM settings WHERE user_id = ?", (user_id,)).fetchall()
+        settings_dict = {r["key"]: r["value"] for r in rows}
+    return settings_dict
+
+
+def next_invoice_number(conn, settings, user_id=None):
+    if user_id is None:
+        user_id = get_current_user_id()
     prefix = settings.get("invoice_prefix", "INV")
     counter = int(settings.get("invoice_counter", "1000"))
     invoice_no = f"{prefix}-{counter}"
     conn.execute(
-        "UPDATE settings SET value = ? WHERE key = 'invoice_counter'",
-        (str(counter + 1),),
+        "UPDATE settings SET value = ? WHERE key = 'invoice_counter' AND user_id = ?",
+        (str(counter + 1), user_id),
     )
     return invoice_no
 
 
-def low_stock_products(conn):
+def low_stock_products(conn, user_id=None):
+    if user_id is None:
+        user_id = get_current_user_id()
     return conn.execute(
-        "SELECT * FROM products WHERE stock_qty <= reorder_level ORDER BY stock_qty ASC"
+        "SELECT * FROM products WHERE stock_qty <= reorder_level AND user_id = ? ORDER BY stock_qty ASC",
+        (user_id,)
     ).fetchall()
 
 
@@ -166,39 +186,44 @@ def low_stock_products(conn):
 
 @app.route("/")
 def dashboard():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
 
     today_row = conn.execute(
         """SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS cnt
-           FROM transactions WHERE date(created_at) = date('now', 'localtime')"""
+           FROM transactions WHERE date(created_at) = date('now', 'localtime') AND user_id = ?""",
+        (user_id,)
     ).fetchone()
 
     week_row = conn.execute(
         """SELECT COALESCE(SUM(total), 0) AS total
-           FROM transactions WHERE date(created_at) >= date('now', 'localtime', '-6 days')"""
+           FROM transactions WHERE date(created_at) >= date('now', 'localtime', '-6 days') AND user_id = ?""",
+        (user_id,)
     ).fetchone()
 
-    product_count = conn.execute("SELECT COUNT(*) AS c FROM products").fetchone()["c"]
-    low_stock = low_stock_products(conn)
+    product_count = conn.execute("SELECT COUNT(*) AS c FROM products WHERE user_id = ?", (user_id,)).fetchone()["c"]
+    low_stock = low_stock_products(conn, user_id)
 
     trend_rows = conn.execute(
         """SELECT date(created_at) AS d, SUM(total) AS total
            FROM transactions
-           WHERE date(created_at) >= date('now', 'localtime', '-13 days')
-           GROUP BY date(created_at) ORDER BY d ASC"""
+           WHERE date(created_at) >= date('now', 'localtime', '-13 days') AND user_id = ?
+           GROUP BY date(created_at) ORDER BY d ASC""",
+        (user_id,)
     ).fetchall()
     trend = {r["d"]: r["total"] for r in trend_rows}
 
     recent = conn.execute(
-        "SELECT * FROM transactions ORDER BY id DESC LIMIT 6"
+        "SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 6",
+        (user_id,)
     ).fetchall()
 
     model_status = ml_predict.get_model_status()
 
     stockout_soon = []
     if product_count > 0:
-        intel = ml_predict.get_intelligence(conn)
+        intel = ml_predict.get_intelligence(conn, user_id)
         for pid, info in intel.items():
             if info["days_to_stockout"] is not None and info["days_to_stockout"] <= 7:
                 stockout_soon.append(info)
@@ -225,21 +250,27 @@ def dashboard():
 # Billing (POS)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Billing (POS)
+# ---------------------------------------------------------------------------
+
 @app.route("/billing")
 def billing():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
-    products = conn.execute("SELECT * FROM products ORDER BY name ASC").fetchall()
+    settings = get_settings(conn, user_id)
+    products = conn.execute("SELECT * FROM products WHERE user_id = ? ORDER BY name ASC", (user_id,)).fetchall()
     conn.close()
     return render_template("billing.html", settings=settings, products=products, active="billing")
 
 
 @app.route("/billing/lookup")
 def billing_lookup():
+    user_id = get_current_user_id()
     code = request.args.get("code", "").strip()
     conn = db.get_connection()
     product = conn.execute(
-        "SELECT * FROM products WHERE code_value = ?", (code,)
+        "SELECT * FROM products WHERE code_value = ? AND user_id = ?", (code, user_id)
     ).fetchone()
     conn.close()
     if not product:
@@ -264,14 +295,14 @@ def inventory_ai_lookup():
 @app.route("/inventory/barcode_lookup")
 def inventory_barcode_lookup():
     """Multi-source barcode lookup with offline cache support."""
+    user_id = get_current_user_id()
     code = request.args.get("code", "").strip()
     if not code:
         return jsonify({"error": "No barcode provided"}), 400
-    # Check for existing duplicate first
     conn = db.get_connection()
     existing = conn.execute(
-        "SELECT id, name, stock_qty FROM products WHERE code_value = ? OR barcode_raw = ?",
-        (code, code)
+        "SELECT id, name, stock_qty FROM products WHERE (code_value = ? OR barcode_raw = ?) AND user_id = ?",
+        (code, code, user_id)
     ).fetchone()
     conn.close()
     if existing:
@@ -281,7 +312,6 @@ def inventory_barcode_lookup():
             "_existing_name": existing["name"],
             "_existing_stock": existing["stock_qty"],
         })
-    # Perform multi-source lookup
     from ml.barcode_lookup import lookup_barcode
     result = lookup_barcode(code)
     return jsonify(result)
@@ -289,14 +319,15 @@ def inventory_barcode_lookup():
 
 @app.route("/inventory/check_duplicate")
 def inventory_check_duplicate():
-    """Check if a barcode already exists in inventory."""
+    """Check if a barcode already exists in user's inventory."""
+    user_id = get_current_user_id()
     code = request.args.get("code", "").strip()
     if not code:
         return jsonify({"exists": False})
     conn = db.get_connection()
     product = conn.execute(
-        "SELECT id, name, stock_qty, unit_label FROM products WHERE code_value = ? OR barcode_raw = ?",
-        (code, code)
+        "SELECT id, name, stock_qty, unit_label FROM products WHERE (code_value = ? OR barcode_raw = ?) AND user_id = ?",
+        (code, code, user_id)
     ).fetchone()
     conn.close()
     if product:
@@ -307,29 +338,32 @@ def inventory_check_duplicate():
 @app.route("/inventory/stock_increase/<int:product_id>", methods=["POST"])
 def inventory_stock_increase(product_id):
     """Increase stock quantity for an existing product (barcode duplicate handling)."""
+    user_id = get_current_user_id()
     payload = request.get_json(force=True)
     qty = float(payload.get("qty", 1))
     conn = db.get_connection()
     conn.execute(
-        "UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ?",
-        (qty, db.now_iso(), product_id)
+        "UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ? AND user_id = ?",
+        (qty, db.now_iso(), product_id, user_id)
     )
     conn.execute(
-        "INSERT INTO stock_adjustments (product_id, change_qty, reason, created_at) VALUES (?, ?, ?, ?)",
-        (product_id, qty, "Barcode scan - stock increase", db.now_iso())
+        "INSERT INTO stock_adjustments (user_id, product_id, change_qty, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, product_id, qty, "Barcode scan - stock increase", db.now_iso())
     )
     conn.commit()
-    row = conn.execute("SELECT stock_qty, name FROM products WHERE id = ?", (product_id,)).fetchone()
+    row = conn.execute("SELECT stock_qty, name FROM products WHERE id = ? AND user_id = ?", (product_id, user_id)).fetchone()
     conn.close()
-    return jsonify({"ok": True, "new_stock": row["stock_qty"], "name": row["name"]})
+    return jsonify({"ok": True, "new_stock": row["stock_qty"] if row else 0, "name": row["name"] if row else ""})
 
 
 @app.route("/inventory/expiry_report")
 def inventory_expiry_report():
-    """Returns all products with expiry dates, color-coded status."""
+    """Returns all products with expiry dates for current user."""
+    user_id = get_current_user_id()
     conn = db.get_connection()
     rows = conn.execute(
-        "SELECT id, name, expiry_date, stock_qty, category, brand FROM products WHERE expiry_date != '' AND expiry_date IS NOT NULL ORDER BY expiry_date ASC"
+        "SELECT id, name, expiry_date, stock_qty, category, brand FROM products WHERE expiry_date != '' AND expiry_date IS NOT NULL AND user_id = ? ORDER BY expiry_date ASC",
+        (user_id,)
     ).fetchall()
     conn.close()
     result = []
@@ -351,7 +385,7 @@ def inventory_image_proxy():
     if not img_url or not img_url.startswith("http"):
         abort(400)
     try:
-        req = urllib.request.Request(img_url, headers={"User-Agent": "LedgerInventory/2.0"})
+        req = urllib.request.Request(img_url, headers={"User-Agent": "AIInventoryManager/2.0"})
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = resp.read()
             content_type = resp.headers.get("Content-Type", "image/jpeg")
@@ -363,43 +397,43 @@ def inventory_image_proxy():
 
 @app.route("/ai/recommendations")
 def ai_recommendations():
-    """AI product movement recommendations: fast movers, slow movers, dead stock."""
+    """AI product movement recommendations for user: fast movers, slow movers, dead stock."""
+    user_id = get_current_user_id()
     conn = db.get_connection()
     days = int(request.args.get("days", 30))
 
-    # Fast movers: most sales in period
     fast = conn.execute(
         f"""SELECT ti.product_name, ti.product_id, SUM(ti.quantity) AS qty_sold,
                SUM(ti.line_total) AS revenue
             FROM transaction_items ti
             JOIN transactions t ON t.id = ti.transaction_id
-            WHERE date(t.created_at) >= date('now','localtime','-{days} days')
-            GROUP BY ti.product_id ORDER BY qty_sold DESC LIMIT 10"""
+            WHERE date(t.created_at) >= date('now','localtime','-{days} days') AND t.user_id = ?
+            GROUP BY ti.product_id ORDER BY qty_sold DESC LIMIT 10""",
+        (user_id,)
     ).fetchall()
 
-    # Slow movers: products with low/no sales but positive stock
-    all_prods = conn.execute("SELECT id, name, stock_qty, category FROM products WHERE stock_qty > 0").fetchall()
+    all_prods = conn.execute("SELECT id, name, stock_qty, category FROM products WHERE stock_qty > 0 AND user_id = ?", (user_id,)).fetchall()
     sold_ids = {r["product_id"] for r in fast if r["product_id"]}
     slow = [dict(p) for p in all_prods if p["id"] not in sold_ids][:10]
 
-    # Dead stock: no movement in dead_stock_days
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
     dead_days = int(settings.get("dead_stock_days", 60))
     dead = conn.execute(
         f"""SELECT p.id, p.name, p.stock_qty, p.category,
                MAX(t.created_at) AS last_sale
             FROM products p
             LEFT JOIN transaction_items ti ON ti.product_id = p.id
-            LEFT JOIN transactions t ON t.id = ti.transaction_id
-            WHERE p.stock_qty > 0
+            LEFT JOIN transactions t ON t.id = ti.transaction_id AND t.user_id = ?
+            WHERE p.stock_qty > 0 AND p.user_id = ?
             GROUP BY p.id
             HAVING last_sale IS NULL OR date(last_sale) < date('now','localtime','-{dead_days} days')
-            ORDER BY p.stock_qty DESC LIMIT 10"""
+            ORDER BY p.stock_qty DESC LIMIT 10""",
+        (user_id, user_id)
     ).fetchall()
 
-    # Restock suggestions: low stock items
     restock = conn.execute(
-        "SELECT id, name, stock_qty, reorder_level FROM products WHERE stock_qty <= reorder_level ORDER BY stock_qty ASC LIMIT 10"
+        "SELECT id, name, stock_qty, reorder_level FROM products WHERE stock_qty <= reorder_level AND user_id = ? ORDER BY stock_qty ASC LIMIT 10",
+        (user_id,)
     ).fetchall()
 
     conn.close()
@@ -411,14 +445,14 @@ def ai_recommendations():
     })
 
 
-
 @app.route("/billing/search")
 def billing_search():
+    user_id = get_current_user_id()
     q = request.args.get("q", "").strip()
     conn = db.get_connection()
     rows = conn.execute(
-        "SELECT * FROM products WHERE name LIKE ? ORDER BY name ASC LIMIT 15",
-        (f"%{q}%",),
+        "SELECT * FROM products WHERE name LIKE ? AND user_id = ? ORDER BY name ASC LIMIT 15",
+        (f"%{q}%", user_id),
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
@@ -426,6 +460,7 @@ def billing_search():
 
 @app.route("/billing/checkout", methods=["POST"])
 def billing_checkout():
+    user_id = get_current_user_id()
     payload = request.get_json(force=True)
     items = payload.get("items", [])
     discount = float(payload.get("discount", 0) or 0)
@@ -437,13 +472,13 @@ def billing_checkout():
         return jsonify({"error": "Cart is empty."}), 400
 
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
 
     subtotal = 0.0
     validated_items = []
     for item in items:
         product = conn.execute(
-            "SELECT * FROM products WHERE id = ?", (item["product_id"],)
+            "SELECT * FROM products WHERE id = ? AND user_id = ?", (item["product_id"], user_id)
         ).fetchone()
         if not product:
             continue
@@ -466,14 +501,14 @@ def billing_checkout():
 
     tax_amount = round((subtotal - discount) * (tax_rate / 100.0), 2)
     total = round(subtotal - discount + tax_amount, 2)
-    invoice_no = next_invoice_number(conn, settings)
+    invoice_no = next_invoice_number(conn, settings, user_id)
     created_at = db.now_iso()
 
     cur = conn.execute(
         """INSERT INTO transactions
-           (invoice_no, created_at, subtotal, discount, tax, total, payment_method, customer_name)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (invoice_no, created_at, subtotal, discount, tax_amount, total, payment_method, customer_name),
+           (user_id, invoice_no, created_at, subtotal, discount, tax, total, payment_method, customer_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, invoice_no, created_at, subtotal, discount, tax_amount, total, payment_method, customer_name),
     )
     txn_id = cur.lastrowid
 
@@ -485,8 +520,8 @@ def billing_checkout():
             (txn_id, product["id"], product["name"], qty, product["unit_price"], line_total),
         )
         conn.execute(
-            "UPDATE products SET stock_qty = stock_qty - ?, updated_at = ? WHERE id = ?",
-            (qty, db.now_iso(), product["id"]),
+            "UPDATE products SET stock_qty = stock_qty - ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (qty, db.now_iso(), product["id"], user_id),
         )
 
     conn.commit()
@@ -496,10 +531,11 @@ def billing_checkout():
 
 @app.route("/receipt/<invoice_no>")
 def receipt(invoice_no):
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
     txn = conn.execute(
-        "SELECT * FROM transactions WHERE invoice_no = ?", (invoice_no,)
+        "SELECT * FROM transactions WHERE invoice_no = ? AND user_id = ?", (invoice_no, user_id)
     ).fetchone()
     if not txn:
         conn.close()
@@ -517,16 +553,17 @@ def receipt(invoice_no):
 
 @app.route("/inventory")
 def inventory():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
     q = request.args.get("q", "").strip()
     if q:
         products = conn.execute(
-            "SELECT * FROM products WHERE name LIKE ? OR code_value LIKE ? ORDER BY name ASC",
-            (f"%{q}%", f"%{q}%"),
+            "SELECT * FROM products WHERE (name LIKE ? OR code_value LIKE ?) AND user_id = ? ORDER BY name ASC",
+            (f"%{q}%", f"%{q}%", user_id),
         ).fetchall()
     else:
-        products = conn.execute("SELECT * FROM products ORDER BY name ASC").fetchall()
+        products = conn.execute("SELECT * FROM products WHERE user_id = ? ORDER BY name ASC", (user_id,)).fetchall()
     conn.close()
     return render_template(
         "inventory.html", settings=settings, products=products, query=q, active="inventory"
@@ -535,8 +572,9 @@ def inventory():
 
 @app.route("/inventory/add", methods=["GET", "POST"])
 def inventory_add():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
 
     if request.method == "POST":
         form = request.form
@@ -544,14 +582,15 @@ def inventory_add():
         try:
             cur = conn.execute(
                 """INSERT INTO products
-                   (name, category, code_value, code_type, unit_price, cost_price,
+                   (user_id, name, category, code_value, code_type, unit_price, cost_price,
                     stock_qty, unit_label, reorder_level, created_at, updated_at,
                     brand, sub_category, description, image_url, expiry_date, mfg_date,
                     batch_number, serial_number, weight, volume, mrp, manufacturer,
                     country_of_origin, ingredients, nutritional_info, dimensions,
                     color, size_label, warranty_info, supplier_details, barcode_raw, source_db)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
+                    user_id,
                     form.get("name", "").strip(),
                     form.get("category", "General").strip() or "General",
                     code_value,
@@ -587,13 +626,12 @@ def inventory_add():
                 ),
             )
             product_id = cur.lastrowid
-            # Track expiry alert if expiry date provided
             expiry_date = form.get("expiry_date", "").strip()
             if expiry_date and product_id:
                 status, _ = db.get_expiry_status(expiry_date)
                 conn.execute(
-                    "INSERT OR REPLACE INTO expiry_alerts (product_id, expiry_date, status, notified, created_at) VALUES (?, ?, ?, 0, ?)",
-                    (product_id, expiry_date, status or "fresh", db.now_iso())
+                    "INSERT OR REPLACE INTO expiry_alerts (user_id, product_id, expiry_date, status, notified, created_at) VALUES (?, ?, ?, ?, 0, ?)",
+                    (user_id, product_id, expiry_date, status or "fresh", db.now_iso())
                 )
             conn.commit()
             conn.close()
@@ -610,9 +648,10 @@ def inventory_add():
 
 @app.route("/inventory/edit/<int:product_id>", methods=["GET", "POST"])
 def inventory_edit(product_id):
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
-    product = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+    settings = get_settings(conn, user_id)
+    product = conn.execute("SELECT * FROM products WHERE id = ? AND user_id = ?", (product_id, user_id)).fetchone()
     if not product:
         conn.close()
         abort(404)
@@ -630,7 +669,7 @@ def inventory_edit(product_id):
                    weight=?, volume=?, mrp=?, manufacturer=?, country_of_origin=?,
                    ingredients=?, nutritional_info=?, dimensions=?, color=?,
                    size_label=?, warranty_info=?, supplier_details=?, barcode_raw=?, source_db=?
-                   WHERE id=?""",
+                   WHERE id=? AND user_id=?""",
                 (
                     form.get("name", "").strip(),
                     form.get("category", "General").strip() or "General",
@@ -665,15 +704,15 @@ def inventory_edit(product_id):
                     form.get("barcode_raw", code_value or "").strip(),
                     form.get("source_db", "").strip(),
                     product_id,
+                    user_id,
                 ),
             )
-            # Update expiry alert
             expiry_date = form.get("expiry_date", "").strip()
             if expiry_date:
                 status, _ = db.get_expiry_status(expiry_date)
                 conn.execute(
-                    "INSERT OR REPLACE INTO expiry_alerts (product_id, expiry_date, status, notified, created_at) VALUES (?, ?, ?, 0, ?)",
-                    (product_id, expiry_date, status or "fresh", db.now_iso())
+                    "INSERT OR REPLACE INTO expiry_alerts (user_id, product_id, expiry_date, status, notified, created_at) VALUES (?, ?, ?, ?, 0, ?)",
+                    (user_id, product_id, expiry_date, status or "fresh", db.now_iso())
                 )
             conn.commit()
             conn.close()
@@ -690,8 +729,9 @@ def inventory_edit(product_id):
 
 @app.route("/inventory/delete/<int:product_id>", methods=["POST"])
 def inventory_delete(product_id):
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
+    conn.execute("DELETE FROM products WHERE id = ? AND user_id = ?", (product_id, user_id))
     conn.commit()
     conn.close()
     flash("Item removed.", "success")
@@ -700,22 +740,23 @@ def inventory_delete(product_id):
 
 @app.route("/inventory/adjust/<int:product_id>", methods=["POST"])
 def inventory_adjust(product_id):
+    user_id = get_current_user_id()
     payload = request.get_json(force=True)
     change = float(payload.get("change_qty", 0))
     reason = payload.get("reason", "Manual adjustment")
     conn = db.get_connection()
     conn.execute(
-        "UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ?",
-        (change, db.now_iso(), product_id),
+        "UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ? AND user_id = ?",
+        (change, db.now_iso(), product_id, user_id),
     )
     conn.execute(
-        "INSERT INTO stock_adjustments (product_id, change_qty, reason, created_at) VALUES (?, ?, ?, ?)",
-        (product_id, change, reason, db.now_iso()),
+        "INSERT INTO stock_adjustments (user_id, product_id, change_qty, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, product_id, change, reason, db.now_iso()),
     )
     conn.commit()
-    row = conn.execute("SELECT stock_qty FROM products WHERE id = ?", (product_id,)).fetchone()
+    row = conn.execute("SELECT stock_qty FROM products WHERE id = ? AND user_id = ?", (product_id, user_id)).fetchone()
     conn.close()
-    return jsonify({"stock_qty": row["stock_qty"]})
+    return jsonify({"stock_qty": row["stock_qty"] if row else 0})
 
 
 
@@ -737,9 +778,10 @@ def scanner_page():
 
 @app.route("/barcode")
 def barcode_page():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
-    products = conn.execute("SELECT id, name, code_value FROM products ORDER BY name ASC").fetchall()
+    settings = get_settings(conn, user_id)
+    products = conn.execute("SELECT id, name, code_value FROM products WHERE user_id = ? ORDER BY name ASC", (user_id,)).fetchall()
     conn.close()
     return render_template(
         "barcode_generator.html", settings=settings, products=products,
@@ -752,7 +794,6 @@ def barcode_preview():
     code_type = request.args.get("type", "CODE128").upper()
     value = request.args.get("value", "").strip()
     if not value:
-        # Auto-generate a suitable code — no DB call needed
         value = codegen.random_code(12, digits_only=(code_type == "EAN13"))
     try:
         img, final_value = codegen.generate_image(code_type, value)
@@ -768,6 +809,7 @@ def barcode_preview():
 
 @app.route("/barcode/create_product", methods=["POST"])
 def barcode_create_product():
+    user_id = get_current_user_id()
     payload = request.get_json(force=True)
     name = (payload.get("name") or "").strip()
     value = (payload.get("value") or "").strip()
@@ -782,10 +824,11 @@ def barcode_create_product():
     try:
         cur = conn.execute(
             """INSERT INTO products
-               (name, category, code_value, code_type, unit_price, cost_price,
+               (user_id, name, category, code_value, code_type, unit_price, cost_price,
                 stock_qty, unit_label, reorder_level, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
+                user_id,
                 name,
                 (payload.get("category") or "General").strip() or "General",
                 value,
@@ -810,6 +853,7 @@ def barcode_create_product():
 
 @app.route("/barcode/assign", methods=["POST"])
 def barcode_assign():
+    user_id = get_current_user_id()
     payload = request.get_json(force=True)
     product_id = payload.get("product_id")
     code_type = payload.get("code_type", "CODE128")
@@ -819,8 +863,8 @@ def barcode_assign():
     conn = db.get_connection()
     try:
         conn.execute(
-            "UPDATE products SET code_value = ?, code_type = ?, updated_at = ? WHERE id = ?",
-            (value, code_type, db.now_iso(), product_id),
+            "UPDATE products SET code_value = ?, code_type = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (value, code_type, db.now_iso(), product_id, user_id),
         )
         conn.commit()
     except db.sqlite3.IntegrityError:
@@ -836,11 +880,12 @@ def barcode_assign():
 
 @app.route("/alerts")
 def alerts():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
-    low_stock = low_stock_products(conn)
-    product_count = conn.execute("SELECT COUNT(*) AS c FROM products").fetchone()["c"]
-    intel = ml_predict.get_intelligence(conn) if product_count else {}
+    settings = get_settings(conn, user_id)
+    low_stock = low_stock_products(conn, user_id)
+    product_count = conn.execute("SELECT COUNT(*) AS c FROM products WHERE user_id = ?", (user_id,)).fetchone()["c"]
+    intel = ml_predict.get_intelligence(conn, user_id) if product_count else {}
     model_status = ml_predict.get_model_status()
 
     predicted = [v for v in intel.values() if v["days_to_stockout"] is not None]
@@ -871,30 +916,34 @@ def ml_retrain():
 
 @app.route("/reports")
 def reports():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
     conn.close()
     return render_template("reports.html", settings=settings, active="reports")
 
 
 @app.route("/reports/data")
 def reports_data():
+    user_id = get_current_user_id()
     days = int(request.args.get("days", 30))
     conn = db.get_connection()
 
     trend_rows = conn.execute(
         f"""SELECT date(created_at) AS d, SUM(total) AS total, COUNT(*) AS cnt
             FROM transactions
-            WHERE date(created_at) >= date('now', 'localtime', '-{days - 1} days')
-            GROUP BY date(created_at) ORDER BY d ASC"""
+            WHERE date(created_at) >= date('now', 'localtime', '-{days - 1} days') AND user_id = ?
+            GROUP BY date(created_at) ORDER BY d ASC""",
+        (user_id,)
     ).fetchall()
 
     top_products = conn.execute(
         f"""SELECT ti.product_name, SUM(ti.quantity) AS qty, SUM(ti.line_total) AS revenue
             FROM transaction_items ti
             JOIN transactions t ON t.id = ti.transaction_id
-            WHERE date(t.created_at) >= date('now', 'localtime', '-{days - 1} days')
-            GROUP BY ti.product_name ORDER BY revenue DESC LIMIT 8"""
+            WHERE date(t.created_at) >= date('now', 'localtime', '-{days - 1} days') AND t.user_id = ?
+            GROUP BY ti.product_name ORDER BY revenue DESC LIMIT 8""",
+        (user_id,)
     ).fetchall()
 
     category_rows = conn.execute(
@@ -902,15 +951,17 @@ def reports_data():
             FROM transaction_items ti
             JOIN transactions t ON t.id = ti.transaction_id
             LEFT JOIN products p ON p.id = ti.product_id
-            WHERE date(t.created_at) >= date('now', 'localtime', '-{days - 1} days')
-            GROUP BY p.category ORDER BY revenue DESC"""
+            WHERE date(t.created_at) >= date('now', 'localtime', '-{days - 1} days') AND t.user_id = ?
+            GROUP BY p.category ORDER BY revenue DESC""",
+        (user_id,)
     ).fetchall()
 
     totals = conn.execute(
         f"""SELECT COALESCE(SUM(total),0) AS revenue, COUNT(*) AS orders,
                    COALESCE(AVG(total),0) AS avg_order
             FROM transactions
-            WHERE date(created_at) >= date('now', 'localtime', '-{days - 1} days')"""
+            WHERE date(created_at) >= date('now', 'localtime', '-{days - 1} days') AND user_id = ?""",
+        (user_id,)
     ).fetchone()
 
     conn.close()
@@ -924,13 +975,16 @@ def reports_data():
 
 @app.route("/reports/export")
 def reports_export():
+    user_id = get_current_user_id()
     conn = db.get_connection()
     rows = conn.execute(
         """SELECT t.invoice_no, t.created_at, ti.product_name, ti.quantity,
                   ti.unit_price, ti.line_total, t.payment_method
            FROM transaction_items ti
            JOIN transactions t ON t.id = ti.transaction_id
-           ORDER BY t.created_at DESC"""
+           WHERE t.user_id = ?
+           ORDER BY t.created_at DESC""",
+        (user_id,)
     ).fetchall()
     conn.close()
 
@@ -953,6 +1007,7 @@ def reports_export():
 
 @app.route("/settings", methods=["GET", "POST"])
 def settings_page():
+    user_id = get_current_user_id()
     conn = db.get_connection()
     if request.method == "POST":
         form = request.form
@@ -963,16 +1018,16 @@ def settings_page():
         ]:
             if key in form:
                 conn.execute(
-                    "INSERT INTO settings (key, value) VALUES (?, ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (key, form.get(key, "")),
+                    "INSERT INTO settings (key, value, user_id) VALUES (?, ?, ?) "
+                    "ON CONFLICT(key, user_id) DO UPDATE SET value = excluded.value",
+                    (key, form.get(key, ""), user_id),
                 )
         conn.commit()
         flash("Settings saved.", "success")
         conn.close()
         return redirect(url_for("settings_page"))
 
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
     conn.close()
     return render_template("settings.html", settings=settings, active="settings")
 
@@ -983,16 +1038,18 @@ def settings_page():
 
 @app.route("/ai")
 def ai_center():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
     conn.close()
     return render_template("ai_center.html", settings=settings, active="ai")
 
 
 @app.route("/ai/report")
 def ai_report():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
     report = ai_engine.run_full_analysis(conn, settings)
     conn.close()
     return jsonify(report)
@@ -1000,17 +1057,17 @@ def ai_report():
 
 @app.route("/ai/nlp", methods=["POST"])
 def ai_nlp():
+    user_id = get_current_user_id()
     payload = request.get_json(force=True)
     query = payload.get("query", "").strip()
     if not query:
         return jsonify({"error": "No query provided."}), 400
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
     result = ai_engine.parse_natural_language(query, conn, settings)
-    # Log NLP action
     conn.execute(
-        "INSERT INTO ai_agent_log (action_type, summary, details, created_at) VALUES (?, ?, ?, ?)",
-        ("nlp", f"NLP: {query}", json.dumps(result.get('response', '')), db.now_iso())
+        "INSERT INTO ai_agent_log (user_id, action_type, summary, details, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, "nlp", f"NLP: {query}", json.dumps(result.get('response', '')), db.now_iso())
     )
     conn.commit()
     conn.close()
@@ -1019,8 +1076,9 @@ def ai_nlp():
 
 @app.route("/ai/restock", methods=["POST"])
 def ai_restock():
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
+    settings = get_settings(conn, user_id)
     result = ai_engine.generate_purchase_orders(conn, settings)
     conn.close()
     return jsonify(result)
@@ -1028,8 +1086,9 @@ def ai_restock():
 
 @app.route("/ai/po/<int:po_id>")
 def ai_po_detail(po_id):
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    po = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)).fetchone()
+    po = conn.execute("SELECT * FROM purchase_orders WHERE id = ? AND user_id = ?", (po_id, user_id)).fetchone()
     if not po:
         conn.close()
         return jsonify({"error": "Purchase order not found."}), 404
@@ -1042,9 +1101,10 @@ def ai_po_detail(po_id):
 
 @app.route("/ai/po/<int:po_id>/print")
 def ai_po_print(po_id):
+    user_id = get_current_user_id()
     conn = db.get_connection()
-    settings = get_settings(conn)
-    po = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)).fetchone()
+    settings = get_settings(conn, user_id)
+    po = conn.execute("SELECT * FROM purchase_orders WHERE id = ? AND user_id = ?", (po_id, user_id)).fetchone()
     if not po:
         conn.close()
         abort(404)
@@ -1065,6 +1125,7 @@ def ai_warehouses():
 
 @app.route("/ai/warehouses/transfer", methods=["POST"])
 def ai_warehouse_transfer():
+    user_id = get_current_user_id()
     payload = request.get_json(force=True)
     product_id = payload.get("product_id")
     from_wh = payload.get("from_warehouse_id")
@@ -1076,25 +1137,22 @@ def ai_warehouse_transfer():
         return jsonify({"error": "Invalid transfer parameters."}), 400
 
     conn = db.get_connection()
-    # Deduct from source
     conn.execute(
         "UPDATE product_warehouse SET stock_qty = stock_qty - ? WHERE product_id = ? AND warehouse_id = ?",
         (qty, product_id, from_wh)
     )
-    # Add to destination (insert if not exists)
     conn.execute(
         """INSERT INTO product_warehouse (product_id, warehouse_id, stock_qty) VALUES (?, ?, ?)
            ON CONFLICT(product_id, warehouse_id) DO UPDATE SET stock_qty = stock_qty + ?""",
         (product_id, to_wh, qty, qty)
     )
-    # Log transfer
     conn.execute(
-        "INSERT INTO warehouse_transfers (product_id, from_warehouse, to_warehouse, quantity, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (product_id, from_wh, to_wh, qty, reason, db.now_iso())
+        "INSERT INTO warehouse_transfers (user_id, product_id, from_warehouse, to_warehouse, quantity, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, product_id, from_wh, to_wh, qty, reason, db.now_iso())
     )
     conn.execute(
-        "INSERT INTO ai_agent_log (action_type, summary, details, created_at) VALUES (?, ?, ?, ?)",
-        ("transfer", f"Transferred {qty} units", json.dumps(payload), db.now_iso())
+        "INSERT INTO ai_agent_log (user_id, action_type, summary, details, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, "transfer", f"Transferred {qty} units", json.dumps(payload), db.now_iso())
     )
     conn.commit()
     conn.close()
@@ -1103,9 +1161,11 @@ def ai_warehouse_transfer():
 
 @app.route("/ai/agent-log")
 def ai_agent_log():
+    user_id = get_current_user_id()
     conn = db.get_connection()
     rows = conn.execute(
-        "SELECT * FROM ai_agent_log ORDER BY id DESC LIMIT 50"
+        "SELECT * FROM ai_agent_log WHERE user_id = ? ORDER BY id DESC LIMIT 50",
+        (user_id,)
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])

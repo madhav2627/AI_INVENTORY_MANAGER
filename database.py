@@ -40,9 +40,10 @@ PRODUCTS_NEW_COLUMNS = [
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL DEFAULT 1,
     name            TEXT NOT NULL,
     category        TEXT DEFAULT 'General',
-    code_value      TEXT UNIQUE,
+    code_value      TEXT,
     code_type       TEXT DEFAULT 'CODE128',
     unit_price      REAL NOT NULL DEFAULT 0,
     cost_price      REAL NOT NULL DEFAULT 0,
@@ -55,7 +56,8 @@ CREATE TABLE IF NOT EXISTS products (
 
 CREATE TABLE IF NOT EXISTS transactions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    invoice_no      TEXT UNIQUE NOT NULL,
+    user_id         INTEGER NOT NULL DEFAULT 1,
+    invoice_no      TEXT NOT NULL,
     created_at      TEXT NOT NULL,
     subtotal        REAL NOT NULL,
     discount        REAL NOT NULL DEFAULT 0,
@@ -76,12 +78,15 @@ CREATE TABLE IF NOT EXISTS transaction_items (
 );
 
 CREATE TABLE IF NOT EXISTS settings (
-    key             TEXT PRIMARY KEY,
-    value           TEXT
+    key             TEXT NOT NULL,
+    value           TEXT,
+    user_id         INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (key, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS stock_adjustments (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL DEFAULT 1,
     product_id      INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
     change_qty      REAL NOT NULL,
     reason          TEXT DEFAULT '',
@@ -91,7 +96,8 @@ CREATE TABLE IF NOT EXISTS stock_adjustments (
 -- Multi-warehouse support
 CREATE TABLE IF NOT EXISTS warehouses (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT NOT NULL UNIQUE,
+    user_id     INTEGER NOT NULL DEFAULT 1,
+    name        TEXT NOT NULL,
     location    TEXT DEFAULT '',
     is_default  INTEGER DEFAULT 0,
     created_at  TEXT NOT NULL
@@ -107,6 +113,7 @@ CREATE TABLE IF NOT EXISTS product_warehouse (
 
 CREATE TABLE IF NOT EXISTS warehouse_transfers (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL DEFAULT 1,
     product_id      INTEGER REFERENCES products(id),
     from_warehouse  INTEGER REFERENCES warehouses(id),
     to_warehouse    INTEGER REFERENCES warehouses(id),
@@ -118,7 +125,8 @@ CREATE TABLE IF NOT EXISTS warehouse_transfers (
 -- Purchase order tracking
 CREATE TABLE IF NOT EXISTS purchase_orders (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    po_number       TEXT UNIQUE NOT NULL,
+    user_id         INTEGER NOT NULL DEFAULT 1,
+    po_number       TEXT NOT NULL,
     status          TEXT DEFAULT 'draft',
     supplier_name   TEXT DEFAULT '',
     total_cost      REAL DEFAULT 0,
@@ -140,6 +148,7 @@ CREATE TABLE IF NOT EXISTS purchase_order_items (
 -- AI agent action log
 CREATE TABLE IF NOT EXISTS ai_agent_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL DEFAULT 1,
     action_type TEXT NOT NULL,
     summary     TEXT NOT NULL,
     details     TEXT DEFAULT '',
@@ -158,6 +167,7 @@ CREATE TABLE IF NOT EXISTS barcode_cache (
 -- Expiry alert tracking
 CREATE TABLE IF NOT EXISTS expiry_alerts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL DEFAULT 1,
     product_id  INTEGER REFERENCES products(id) ON DELETE CASCADE,
     expiry_date TEXT NOT NULL,
     status      TEXT DEFAULT 'fresh',
@@ -208,6 +218,28 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+TABLES_WITH_USER_ID = [
+    "products", "transactions", "settings", "stock_adjustments",
+    "warehouses", "warehouse_transfers", "purchase_orders",
+    "ai_agent_log", "expiry_alerts"
+]
+
+def _migrate_user_id_columns(conn):
+    """Safely add user_id column to existing tables for multi-tenant data isolation."""
+    for table_name in TABLES_WITH_USER_ID:
+        try:
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+            if "user_id" not in existing:
+                conn.execute(f"ALTER TABLE {table_name} ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
+        except Exception:
+            pass
+    try:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_products_user ON products(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_user ON transactions(user_id)")
+    except Exception:
+        pass
 
 
 def _migrate_products_columns(conn):
@@ -274,10 +306,11 @@ def init_db():
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
     conn = get_connection()
     conn.executescript(SCHEMA)
+    _migrate_user_id_columns(conn)
     _migrate_products_columns(conn)
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value)
+            "INSERT OR IGNORE INTO settings (key, value, user_id) VALUES (?, ?, 1)", (key, value)
         )
     conn.commit()
     seed_default_admin(conn)
