@@ -638,7 +638,7 @@
   }
 
   // ── Main lookup function ──────────────────────────────────────────────────
-  function lookupBarcode(code, force) {
+  function lookupBarcode(code, force, isRetryAttempt = false) {
     if (!code) return;
     const nameEl = el("item-name");
     if (!force && nameEl && nameEl.value.trim() !== "") return;
@@ -648,7 +648,10 @@
 
     setLoading(true);
 
-    const url = `/inventory/barcode_lookup?code=${encodeURIComponent(code)}${force ? '&force=1' : ''}`;
+    const retryParam = isRetryAttempt ? '&retry=1' : '';
+    const forceParam = force ? '&force=1' : '';
+    const url = `/inventory/barcode_lookup?code=${encodeURIComponent(code)}${forceParam}${retryParam}`;
+
     fetch(url)
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(data => {
@@ -659,27 +662,40 @@
           return;
         }
 
-        fillForm(data);
-        addToHistory(code, data.name || "Scanned Barcode");
-        scanSessionCount++;
-
-        const countEl = el("scanner-session-count");
-        if (countEl) { countEl.textContent = `Session: ${scanSessionCount} scan${scanSessionCount !== 1 ? "s" : ""}`; countEl.style.display = "block"; }
-
         if (data._found && data.name) {
+          fillForm(data);
+          addToHistory(code, data.name || "Scanned Barcode");
+          scanSessionCount++;
+
+          const countEl = el("scanner-session-count");
+          if (countEl) { countEl.textContent = `Session: ${scanSessionCount} scan${scanSessionCount !== 1 ? "s" : ""}`; countEl.style.display = "block"; }
+
           showToast(`✅ Auto-filled: <strong>${data.name}</strong> <span style="opacity:.7;font-size:11px;">via ${data.source_db || "Open DB"}</span>`, "success");
+        } else if (data.status === "TEMPORARY_FAILURE" || data.status === "RATE_LIMITED" || data.status === "TIMEOUT") {
+          if (!isRetryAttempt) {
+            showToast(`⏳ Product lookup temporarily failed. Retrying...`);
+            setTimeout(() => lookupBarcode(code, force, true), 1200);
+          } else {
+            showToast(`⚠️ Product details could not be retrieved right now. <button style="margin-left:8px;padding:2px 8px;border-radius:6px;border:none;background:var(--accent,#d4af37);color:#fff;cursor:pointer;" onclick="window.lookupBarcode('${code}', false, true)">🔄 Retry</button>`);
+          }
         } else if (!data._found && data.brand) {
-          // Partial Indian prefix hit — brand/manufacturer pre-filled, name needs manual entry
+          fillForm(data);
           showToast(`🇮🇳 <strong>${data.brand}</strong> product detected (GS1 India). Brand & manufacturer pre-filled — please enter the product name.`);
         } else {
-          showToast(`⚠️ Barcode <code>${code}</code> read cleanly, but details are not in public databases. Please enter product details below.`);
+          showToast(`⚠️ Barcode read successfully, but product information was not found in public databases. You can enter details manually.`);
         }
       })
       .catch(() => {
         setLoading(false);
-        showToast("⚠️ Lookup failed. Check internet or enter details manually.");
+        if (!isRetryAttempt) {
+          showToast(`⏳ Product lookup temporarily failed. Retrying...`);
+          setTimeout(() => lookupBarcode(code, force, true), 1200);
+        } else {
+          showToast(`⚠️ Product lookup failed. <button style="margin-left:8px;padding:2px 8px;border-radius:6px;border:none;background:var(--accent,#d4af37);color:#fff;cursor:pointer;" onclick="window.lookupBarcode('${code}', false, true)">🔄 Retry</button>`);
+        }
       });
   }
+  window.lookupBarcode = lookupBarcode;
 
   // ── Scanner result callback ───────────────────────────────────────────────
   window.SCANNER_ON_RESULT = function (code) {

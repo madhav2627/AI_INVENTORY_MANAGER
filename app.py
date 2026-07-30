@@ -327,7 +327,7 @@ def inventory_barcode_lookup():
     skip_cache = request.args.get("retry", "").lower() in ["1", "true"] or force_ai
 
     from ml.barcode_lookup import lookup_barcode
-    result = lookup_barcode(code, use_cache=not skip_cache, force_ai=force_ai)
+    result = lookup_barcode(code, use_cache=not skip_cache, force_ai=force_ai, user_id=user_id)
     return jsonify(result)
 
 
