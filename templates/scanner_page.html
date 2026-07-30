@@ -452,12 +452,17 @@
           });
         } else {
           updateStat("notfound");
+          // Build a helpful meta line even for not-found (Indian prefix data may be available)
+          let notFoundMeta = `Barcode: ${code}`;
+          if (data.brand) notFoundMeta = `🇮🇳 ${data.brand} product · Enter product name below`;
+          else notFoundMeta += ` — try AI lookup or add manually`;
           addResultCard({
             type: "not-found",
             code,
-            name: "No product found in database",
-            meta: `Barcode: ${code} — try AI lookup or add manually`,
+            name: data.brand ? `${data.brand} — Name unknown` : "No product found in database",
+            meta: notFoundMeta,
             data,
+            showRetry: true,
           });
         }
 
@@ -465,7 +470,7 @@
         setTimeout(() => {
           scanCooldown = false;
           updateStatus("🟢 Ready — point at next barcode.", true);
-        }, 1500); // ← increased from 1200ms to prevent double-reads
+        }, 1500); // <- increased from 1200ms to prevent double-reads
       })
       .catch(() => {
         removeCard(loadingCardId);

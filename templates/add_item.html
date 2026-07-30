@@ -668,6 +668,9 @@
 
         if (data._found && data.name) {
           showToast(`✅ Auto-filled: <strong>${data.name}</strong> <span style="opacity:.7;font-size:11px;">via ${data.source_db || "Open DB"}</span>`, "success");
+        } else if (!data._found && data.brand) {
+          // Partial Indian prefix hit — brand/manufacturer pre-filled, name needs manual entry
+          showToast(`🇮🇳 <strong>${data.brand}</strong> product detected (GS1 India). Brand & manufacturer pre-filled — please enter the product name.`);
         } else {
           showToast(`⚠️ Barcode <code>${code}</code> read cleanly, but details are not in public databases. Please enter product details below.`);
         }

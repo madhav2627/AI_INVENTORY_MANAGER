@@ -1,26 +1,29 @@
 """
-Multi-Source High-Precision Barcode Lookup Engine  (v5 — Parallel + Accurate)
-------------------------------------------------------------------------------
-Queries global open barcode databases with concurrent requests for speed:
-  1. Open Food Facts      (Food, grocery)
-  2. Open Beauty Facts    (Cosmetics, hygiene, soaps, personal care)
-  3. Open Products Facts  (Household, electronics, toys)
-  4. Open Library API     (Books, ISBN 978/979)
-  5. UPC ItemDB          (General retail products)
-  6. go-upc.com          (Additional general retail fallback)
-  7. EAN Search          (Global GTIN/EAN products)
+Multi-Source High-Precision Barcode Lookup Engine  (v6 -- Full Parallel + Indian DB)
+-------------------------------------------------------------------------------------
+Queries global AND Indian barcode databases concurrently for maximum hit rate:
+  1. Open Food Facts       (Food, grocery)
+  2. Open Beauty Facts     (Cosmetics, hygiene, soaps, personal care)
+  3. Open Products Facts   (Household, electronics, toys)
+  4. Open Library API      (Books, ISBN 978/979)
+  5. UPC ItemDB            (General retail products)
+  6. go-upc.com            (General retail fallback)
+  7. EAN Search            (Global GTIN/EAN)
+  8. barcodelookup.com     (Scrape -- largest free DB, great Indian coverage)
+  9. barcodesdb.com        (Community barcode registry)
+ 10. GS1-India prefix KB   (Offline instant brand/manufacturer hints for 890... barcodes)
 
-Key improvements over v4:
-- Open Facts DBs 1–3 queried in PARALLEL (ThreadPoolExecutor) → 3× faster
-- Timeout raised 4 s → 7 s (catches slow responders)
-- Cache hits now always return _found: True
-- Expanded barcode variant generation (strips non-digits, handles EAN-8, UPC-E,
-  leading-zero padding in both directions)
-- go-upc.com added as reliable fallback
-- conn.close() fixed in caller (app.py)
+v6 improvements over v5:
+- ALL sources queried in FULL parallel (not just Open-Facts) for fastest first-hit
+- Per-variant caching: any cached variant returns instantly on retry
+- Larger variant set + automatic check-digit correction for near-miss scans
+- barcodelookup.com scrape (biggest free barcode DB -- good Indian retail coverage)
+- GS1-India prefix (890...) offline knowledge base: instant brand hints
+- User-Agent rotation to reduce 429 rate-limit rejections
+- Each source has its own timeout; first valid winner returned immediately
 
-If NO database matches, returns _found=False and an empty name so the user
-can type the real product name without synthetic overwrite.
+If NO database matches, returns _found=False with empty name (plus brand hints
+for Indian products) so the user can fill details without synthetic overwrites.
 """
 
 import json
@@ -28,18 +31,96 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import os
+import re
 import sys
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeout
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TIMEOUT = 7          # seconds per individual HTTP request
-PARALLEL_TIMEOUT = 8  # max seconds to wait for the parallel Open-Facts batch
+TIMEOUT = 8           # seconds per individual HTTP request
+FULL_PARALLEL_TIMEOUT = 10  # overall parallel batch timeout
+
+# ---------------------------------------------------------------------------
+# User-Agent pool (rotate to reduce rate-limit rejections)
+# ---------------------------------------------------------------------------
+
+_UA_POOL = [
+    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17 Mobile/15E148 Safari/604.1",
+    "AIInventoryManager/6.0 (contact@aiinventory.local)",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+]
+
+def _ua() -> str:
+    return random.choice(_UA_POOL)
+
+
+# ---------------------------------------------------------------------------
+# GS1-India prefix knowledge base (offline, instant)
+# ---------------------------------------------------------------------------
+# Indian EAN-13 barcodes begin with 890. For common manufacturers we can
+# immediately return brand/category hints even without a DB hit.
+
+_INDIA_PREFIX_BRANDS = {
+    "8901030": ("Hindustan Unilever", "Hindustan Unilever Ltd", "Personal Care"),
+    "8901063": ("P&G India", "Procter & Gamble Hygiene & Health Care", "Personal Care"),
+    "8901396": ("Nestle India", "Nestle India Ltd", "Food & Grocery"),
+    "8901719": ("ITC", "ITC Limited", "Food & Grocery"),
+    "8902102": ("Britannia", "Britannia Industries Ltd", "Snacks"),
+    "8906002": ("Amul", "GCMMF (Amul)", "Dairy"),
+    "8901058": ("Parle", "Parle Products Pvt Ltd", "Snacks"),
+    "8901764": ("Dabur", "Dabur India Ltd", "Personal Care"),
+    "8901234": ("Colgate India", "Colgate-Palmolive (India) Ltd", "Personal Care"),
+    "8902519": ("Patanjali", "Patanjali Ayurved Ltd", "Food & Grocery"),
+    "8901612": ("Marico", "Marico Limited", "Personal Care"),
+    "8901072": ("Tata Consumer", "Tata Consumer Products Ltd", "Food & Grocery"),
+    "8901042": ("Cadbury India", "Mondelez India Foods", "Snacks"),
+    "8901777": ("Godrej Consumer", "Godrej Consumer Products Ltd", "Personal Care"),
+    "8906025": ("Haldirams", "Haldiram Foods Pvt Ltd", "Snacks"),
+    "8901893": ("Emami", "Emami Limited", "Personal Care"),
+    "8901526": ("Himalaya", "The Himalaya Drug Company", "Personal Care"),
+    "8901629": ("GlaxoSmithKline", "GSK Consumer Healthcare India", "Health & Hygiene"),
+    "8901463": ("Johnson & Johnson India", "Johnson & Johnson Ltd", "Personal Care"),
+}
+
+
+def _indian_prefix_hint(barcode: str) -> dict | None:
+    """Return brand/manufacturer hints for GS1-India (890...) barcodes."""
+    if not barcode.startswith("890") or len(barcode) < 7:
+        return None
+    for prefix, (brand, mfr, cat) in _INDIA_PREFIX_BRANDS.items():
+        if barcode.startswith(prefix):
+            return {"brand": brand, "manufacturer": mfr, "category": cat,
+                    "country_of_origin": "India"}
+    return {"country_of_origin": "India"}
 
 
 # ---------------------------------------------------------------------------
 # Barcode variant generator
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Barcode variant generator  (improved in v6)
+# ---------------------------------------------------------------------------
+
+def _ean_check_digit(body: str, total_len: int) -> int:
+    """Compute the expected EAN/UPC check digit given the barcode body (all chars except last)."""
+    weights = [3 if (total_len - 1 - i) % 2 == 0 else 1 for i in range(len(body))]
+    s = sum(int(d) * w for d, w in zip(body, weights))
+    return (10 - (s % 10)) % 10
+
+
+def _fix_check_digit(barcode: str) -> str | None:
+    """Return barcode with the correct last digit if it was misread, else None."""
+    if not barcode.isdigit():
+        return None
+    body = barcode[:-1]
+    correct = _ean_check_digit(body, len(barcode))
+    if correct == int(barcode[-1]):
+        return None  # already correct
+    return body + str(correct)
+
 
 def _get_barcode_variants(barcode: str) -> list[str]:
     """
@@ -48,11 +129,12 @@ def _get_barcode_variants(barcode: str) -> list[str]:
     Strategy:
     - Strip non-digit characters first (handles CODE-128 with hyphens/spaces).
     - Keep original (might be alphanumeric CODE-128).
-    - For 12-digit (UPC-A):  try with leading '0' → 13-digit EAN-13.
-    - For 13-digit (EAN-13): try stripping leading '0' → 12-digit UPC-A.
-    - For 8-digit  (EAN-8):  keep as-is (separate spec — no padding needed).
-    - For 7-digit  (UPC-E):  try expanded form (60xxxxx0 pattern).
-    - Also include the digit-only version even if original had chars.
+    - EAN-13 <-> UPC-A (leading-zero padding in both directions).
+    - EAN-8 kept as-is.
+    - UPC-E 7-digit -> 0-prefix expansion.
+    - 11-digit (dropped check digit) -> try computed completion.
+    - 14-digit ITF-14 -> strip leading zero to get EAN-13.
+    - Also try auto-correcting a misread check digit (common in bad lighting).
     """
     original = str(barcode).strip()
     digits_only = "".join(c for c in original if c.isdigit())
@@ -68,19 +150,35 @@ def _get_barcode_variants(barcode: str) -> list[str]:
     if digits_only:
         n = len(digits_only)
         if n == 12:
-            # UPC-A → pad to EAN-13
+            # UPC-A -> pad to EAN-13
             candidates.append("0" + digits_only)
         elif n == 13:
             if digits_only.startswith("0"):
-                # EAN-13 starting with 0 → strip leading zero → UPC-A
                 candidates.append(digits_only[1:])
+            # Also try with corrected check digit (catches single-digit scan errors)
+            corrected = _fix_check_digit(digits_only)
+            if corrected and corrected != digits_only:
+                candidates.append(corrected)
+                if corrected.startswith("0"):
+                    candidates.append(corrected[1:])
         elif n == 7:
-            # UPC-E 7-digit (without check digit) — try common 0-prefix expansion
+            # UPC-E 7-digit (without check digit)
             candidates.append("0" + digits_only)
+        elif n == 8:
+            # EAN-8 -- also try as padded UPC-A (rare edge case)
+            candidates.append("0000" + digits_only)
         elif n == 11:
-            # Sometimes barcode readers drop the check digit on EAN-13
-            candidates.append(digits_only + "0")
-            candidates.append("0" + digits_only + "0")
+            # EAN-13 with dropped check digit -- compute the correct last digit
+            for last in "0123456789":
+                trial = digits_only + last
+                if _ean_check_digit(trial[:-1], len(trial)) == int(last):
+                    candidates.append(trial)
+                    break
+            candidates.append("0" + digits_only + "0")  # brute fallback
+        elif n == 14:
+            # ITF-14 / GTIN-14 -> strip leading zero -> EAN-13
+            if digits_only.startswith("0"):
+                candidates.append(digits_only[1:])
 
     # De-duplicate while preserving order
     seen: set[str] = set()
@@ -101,7 +199,7 @@ def _fetch_open_facts(barcode: str, domain: str = "openfoodfacts",
     url = f"https://world.{domain}.org/api/v2/product/{barcode}.json"
     try:
         req = urllib.request.Request(
-            url, headers={"User-Agent": "AIInventoryManager/2.0 (contact@aiinventory.local)"})
+            url, headers={"User-Agent": _ua()})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             if resp.status != 200:
                 return None
@@ -171,7 +269,7 @@ def _fetch_open_library(barcode: str) -> dict | None:
         return None
     url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{barcode}&jscmd=data&format=json"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "AIInventoryManager/2.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": _ua()})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             if resp.status != 200:
                 return None
@@ -205,7 +303,7 @@ def _fetch_upc_itemdb(barcode: str) -> dict | None:
     url = f"https://api.upcitemdb.com/prod/trial/lookup?upc={barcode}"
     try:
         req = urllib.request.Request(
-            url, headers={"User-Agent": "AIInventoryManager/2.0", "Accept": "application/json"})
+            url, headers={"User-Agent": _ua(), "Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             if resp.status != 200:
                 return None
@@ -257,7 +355,7 @@ def _fetch_go_upc(barcode: str) -> dict | None:
         req = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "AIInventoryManager/2.0",
+                "User-Agent": _ua(),
                 "Accept": "application/json",
             },
         )
@@ -293,7 +391,7 @@ def _fetch_go_upc(barcode: str) -> dict | None:
 def _fetch_ean_search(barcode: str) -> dict | None:
     url = f"https://ean-search.org/perl/api.pl?q={barcode}&lang=1&format=json"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "AIInventoryManager/2.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": _ua()})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             if resp.status != 200:
                 return None
@@ -310,6 +408,109 @@ def _fetch_ean_search(barcode: str) -> dict | None:
         "name": item.get("name") or "",
         "brand": "",
         "category": item.get("categoryName") or "",
+        "barcode_raw": barcode,
+        "unit_label": "pcs",
+    }
+
+
+def _fetch_barcodelookup(barcode: str) -> dict | None:
+    """
+    Scrape barcodelookup.com — one of the largest free barcode databases with
+    strong coverage of Indian retail products (Hindustan Unilever, ITC, Nestle
+    India, Parle, Britannia, Amul, etc.).
+    """
+    url = f"https://www.barcodelookup.com/{barcode}"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 "
+                              "(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Referer": "https://www.barcodelookup.com/",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            if resp.status != 200:
+                return None
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+    # Try multiple patterns to extract product name from the page
+    name_match = (
+        re.search(r'<h4[^>]*class="[^"]*product-name[^"]*"[^>]*>\s*([^<]+)\s*<', html, re.IGNORECASE) or
+        re.search(r'<h1[^>]*>\s*([^<]{5,120})\s*</h1>', html, re.IGNORECASE) or
+        re.search(r'"name"\s*:\s*"([^"]{5,120})"', html)
+    )
+    if not name_match:
+        return None
+    name = name_match.group(1).strip()
+    # Reject generic page titles
+    if any(x in name.lower() for x in ["barcode lookup", "scan", "upc", "ean", "search"]):
+        return None
+    if len(name) < 3:
+        return None
+
+    brand_match = (
+        re.search(r'<span[^>]*>\s*Brand\s*</span>\s*<span[^>]*>\s*([^<]+)\s*</span>', html, re.IGNORECASE) or
+        re.search(r'"brand"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"', html)
+    )
+    brand = brand_match.group(1).strip() if brand_match else ""
+
+    cat_match = re.search(
+        r'<span[^>]*>\s*Category\s*</span>\s*<span[^>]*>\s*([^<]+)\s*</span>', html, re.IGNORECASE)
+    category = cat_match.group(1).strip() if cat_match else ""
+
+    desc_match = re.search(
+        r'<p[^>]*class="[^"]*product-description[^"]*"[^>]*>\s*([^<]{10,}?)\s*</p>', html, re.IGNORECASE)
+    description = desc_match.group(1).strip() if desc_match else ""
+
+    img_match = (
+        re.search(r'<img[^>]*class="[^"]*product-image[^"]*"[^>]*src="([^"]+)"', html, re.IGNORECASE) or
+        re.search(r'"image"\s*:\s*"(https?://[^"]+)"', html)
+    )
+    image_url = img_match.group(1).strip() if img_match else ""
+
+    return {
+        "source_db": "Barcode Lookup",
+        "name": name,
+        "brand": brand,
+        "category": category,
+        "description": description,
+        "image_url": image_url,
+        "barcode_raw": barcode,
+        "unit_label": "pcs",
+    }
+
+
+def _fetch_barcodesdb(barcode: str) -> dict | None:
+    """barcodesdb.com — community-maintained barcode registry."""
+    url = f"https://barcodesdb.com/api/v1/barcode/{barcode}"
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": _ua(), "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            if resp.status != 200:
+                return None
+            raw = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+    if not raw or not isinstance(raw, dict):
+        return None
+    product = raw.get("product") or raw
+    name = (product.get("name") or product.get("title") or "").strip()
+    if not name:
+        return None
+    return {
+        "source_db": "BarcodesDB",
+        "name": name,
+        "brand": (product.get("brand") or "").strip(),
+        "category": (product.get("category") or "").strip(),
+        "description": (product.get("description") or "").strip(),
+        "image_url": product.get("image") or product.get("image_url") or "",
         "barcode_raw": barcode,
         "unit_label": "pcs",
     }
@@ -409,20 +610,30 @@ def _cache_get(barcode: str) -> dict | None:
         import sqlite3
         db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                "data", "store.db")
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT data, source FROM barcode_cache WHERE barcode = ?", (barcode,)
         ).fetchone()
         conn.close()
         if row:
-            # Only reject old synthetic AI-generated cache entries
-            if row[1] in ("AI Model", "AI Prediction"):
+            # Reject old synthetic AI-generated cache entries
+            if row["source"] in ("AI Model", "AI Prediction"):
                 return None
-            d = json.loads(row[0])
+            d = json.loads(row["data"])
             if d.get("name"):
                 return d
     except Exception:
         pass
+    return None
+
+
+def _cache_get_any_variant(variants: list[str]) -> dict | None:
+    """Check cache for any of the barcode variants — returns first hit."""
+    for v in variants:
+        cached = _cache_get(v)
+        if cached and cached.get("name"):
+            return cached
     return None
 
 
@@ -432,7 +643,7 @@ def _cache_set(barcode: str, data: dict, source: str) -> None:
         from datetime import datetime
         db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                "data", "store.db")
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=5)
         conn.execute(
             "INSERT OR REPLACE INTO barcode_cache (barcode, data, source, cached_at) VALUES (?, ?, ?, ?)",
             (barcode, json.dumps(data), source, datetime.now().isoformat(timespec="seconds")),
@@ -444,32 +655,60 @@ def _cache_set(barcode: str, data: dict, source: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Parallel Open-Facts fetcher (runs all 3 in parallel)
+# Full parallel multi-source fetcher  (v6 -- ALL sources in parallel)
 # ---------------------------------------------------------------------------
 
-def _fetch_open_facts_parallel(variants: list[str]) -> dict | None:
+def _fetch_all_sources_parallel(variants: list[str]) -> dict | None:
     """
-    Query Open Food Facts, Open Beauty Facts, and Open Products Facts
-    concurrently across all barcode variants.
-    Returns the first successful result or None.
+    Query ALL barcode sources across ALL variants concurrently.
+    First result with a valid product name wins.
+    Sources are submitted in priority order so faster/more reliable sources
+    tend to win ties.
     """
     tasks = []
+
+    # Priority 1 — Open Food/Beauty/Products Facts (best structured data)
     for domain, source_name in [
-        ("openfoodfacts",    "Open Food Facts"),
-        ("openbeautyfacts",  "Open Beauty Facts"),
-        ("openproductsfacts","Open Products Facts"),
+        ("openfoodfacts",     "Open Food Facts"),
+        ("openbeautyfacts",   "Open Beauty Facts"),
+        ("openproductsfacts", "Open Products Facts"),
     ]:
         for v in variants:
-            tasks.append((v, domain, source_name))
+            tasks.append((_fetch_open_facts, (v, domain, source_name)))
 
-    with ThreadPoolExecutor(max_workers=min(len(tasks), 9)) as executor:
+    # Priority 2 — UPC ItemDB
+    for v in variants:
+        tasks.append((_fetch_upc_itemdb, (v,)))
+
+    # Priority 3 — Go-UPC
+    for v in variants:
+        tasks.append((_fetch_go_upc, (v,)))
+
+    # Priority 4 — barcodelookup.com (large DB, good Indian coverage)
+    for v in variants:
+        tasks.append((_fetch_barcodelookup, (v,)))
+
+    # Priority 5 — EAN Search
+    for v in variants:
+        tasks.append((_fetch_ean_search, (v,)))
+
+    # Priority 6 — Open Library (books only)
+    for v in variants:
+        if v.startswith("978") or v.startswith("979"):
+            tasks.append((_fetch_open_library, (v,)))
+
+    # Priority 7 — BarcodesDB
+    for v in variants:
+        tasks.append((_fetch_barcodesdb, (v,)))
+
+    max_workers = min(len(tasks), 20)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_fetch_open_facts, v, domain, sname): (v, domain, sname)
-            for v, domain, sname in tasks
+            executor.submit(fn, *args): (fn.__name__, args)
+            for fn, args in tasks
         }
-        # Collect results as they complete; return first non-None
         try:
-            for future in as_completed(futures, timeout=PARALLEL_TIMEOUT):
+            for future in as_completed(futures, timeout=FULL_PARALLEL_TIMEOUT):
                 try:
                     res = future.result()
                     if res and res.get("name"):
@@ -493,86 +732,90 @@ def lookup_barcode(barcode: str, use_cache: bool = True, force_ai: bool = False)
     """
     Look up a barcode across global product databases.
 
-    Returns real product details if found. If NOT found, returns _found=False
-    with an empty name so the user can type the real name without synthetic
-    overwrites.
+    Returns _found=True with real product details if found.
+    Returns _found=False with empty name (plus brand hints for Indian products)
+    if not found, so the user can type the product name without synthetic overwrites.
     """
     barcode = str(barcode).strip()
     if not barcode:
         return {"_found": False, "name": "", "code_value": "", "barcode_raw": ""}
 
-    # 1. Check local cache first
+    variants = _get_barcode_variants(barcode)
+
+    # Step 1: Check cache for any variant (fastest path)
     if use_cache and not force_ai:
-        cached = _cache_get(barcode)
+        cached = _cache_get_any_variant(variants)
         if cached and cached.get("name"):
             cached["_from_cache"] = True
-            cached["_found"] = True          # ← was missing in v4!
+            cached["_found"] = True
+            cached["barcode_raw"] = barcode
+            cached["code_value"] = barcode
             return cached
 
-    variants = _get_barcode_variants(barcode)
-    result: dict = {}
+    # Step 2: Offline Indian prefix hints (instant, no network needed)
+    india_hint = _indian_prefix_hint(barcode)
 
-    # 2. Open Food/Beauty/Products Facts — queried IN PARALLEL for speed
-    res = _fetch_open_facts_parallel(variants)
+    # Step 3: Query ALL sources in full parallel across all variants
+    result: dict = {}
+    res = _fetch_all_sources_parallel(variants)
     if res and res.get("name"):
         result = res
 
-    # 3. Open Library (books) — only needed if nothing found yet
-    if not result.get("name"):
-        for v in variants:
-            res = _fetch_open_library(v)
-            if res and res.get("name"):
-                result = res
-                break
-
-    # 4. UPC ItemDB
-    if not result.get("name"):
-        for v in variants:
-            res = _fetch_upc_itemdb(v)
-            if res and res.get("name"):
-                result = res
-                break
-
-    # 5. go-upc.com (free, no API key)
-    if not result.get("name"):
-        for v in variants:
-            res = _fetch_go_upc(v)
-            if res and res.get("name"):
-                result = res
-                break
-
-    # 6. EAN Search
-    if not result.get("name"):
-        for v in variants:
-            res = _fetch_ean_search(v)
-            if res and res.get("name"):
-                result = res
-                break
-
-    # 7. Found: apply brand rules, normalise, cache
+    # Step 4: Found — enrich with Indian hints, apply brand rules, cache all variants
     if result.get("name"):
+        # Fill gaps with Indian prefix hints
+        if india_hint:
+            for k, v in india_hint.items():
+                if not result.get(k):
+                    result[k] = v
         result = _apply_ai_suggestions(result)
         result["barcode_raw"] = barcode
         result["code_value"] = barcode
-        result.setdefault("unit_price",     0.0)
-        result.setdefault("cost_price",     0.0)
-        result.setdefault("stock_qty",      10)
-        result.setdefault("reorder_level",  5)
-        _cache_set(barcode, result, result.get("source_db", "Open DB"))
+        result.setdefault("unit_price",    0.0)
+        result.setdefault("cost_price",    0.0)
+        result.setdefault("stock_qty",     10)
+        result.setdefault("reorder_level", 5)
+        # Cache under ALL variants so future scans are instant
+        source = result.get("source_db", "Open DB")
+        for v in variants:
+            _cache_set(v, result, source)
         result["_found"] = True
         return result
 
-    # 8. Force AI synthetic prediction (only when explicitly requested)
-    if force_ai:
-        from ml.barcode_ai import analyze_barcode as _ai
-        ai_res = _ai(barcode)
-        if ai_res and ai_res.get("name"):
-            ai_res["source_db"] = "AI Prediction"
-            ai_res["barcode_raw"] = barcode
-            ai_res["_found"] = True
-            return ai_res
+    # Step 5: Partial Indian hit — return brand hints without a product name
+    # The user can fill in the product name; brand/category are pre-filled.
+    if india_hint and india_hint.get("brand"):
+        return {
+            "_found": False,
+            "source_db": "GS1 India Prefix",
+            "name": "",
+            "brand": india_hint.get("brand", ""),
+            "category": india_hint.get("category", "General"),
+            "manufacturer": india_hint.get("manufacturer", ""),
+            "country_of_origin": "India",
+            "unit_label": "pcs",
+            "stock_qty": 10,
+            "reorder_level": 5,
+            "unit_price": 0.0,
+            "cost_price": 0.0,
+            "barcode_raw": barcode,
+            "code_value": barcode,
+        }
 
-    # 9. Not found — return clean empty structure
+    # Step 6: Force AI synthetic prediction (only when explicitly requested)
+    if force_ai:
+        try:
+            from ml.barcode_ai import analyze_barcode as _ai
+            ai_res = _ai(barcode)
+            if ai_res and ai_res.get("name"):
+                ai_res["source_db"] = "AI Prediction"
+                ai_res["barcode_raw"] = barcode
+                ai_res["_found"] = True
+                return ai_res
+        except Exception:
+            pass
+
+    # Step 7: Not found — return clean empty structure
     return {
         "_found": False,
         "source_db": "Not Found",
