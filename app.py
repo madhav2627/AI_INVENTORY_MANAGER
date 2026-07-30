@@ -305,21 +305,29 @@ def inventory_barcode_lookup():
     code = request.args.get("code", "").strip()
     if not code:
         return jsonify({"error": "No barcode provided"}), 400
+
     conn = db.get_connection()
     existing = conn.execute(
-        "SELECT id, name, stock_qty FROM products WHERE (code_value = ? OR barcode_raw = ?) AND user_id = ?",
+        "SELECT id, name, stock_qty, unit_label FROM products WHERE (code_value = ? OR barcode_raw = ?) AND user_id = ?",
         (code, code, user_id)
     ).fetchone()
+    conn.close()  # Always close to avoid SQLite locking issues
+
     if existing:
         return jsonify({
             "_duplicate": True,
             "_existing_id": existing["id"],
             "_existing_name": existing["name"],
             "_existing_stock": existing["stock_qty"],
+            "_existing_unit_label": existing["unit_label"] or "pcs",
         })
-    force_ai = request.args.get("force", "").lower() in ["1", "true"]
+
+    # ?force=1 or ?retry=1 → skip cache and force fresh online lookup
+    force_ai  = request.args.get("force", "").lower() in ["1", "true"]
+    skip_cache = request.args.get("retry", "").lower() in ["1", "true"] or force_ai
+
     from ml.barcode_lookup import lookup_barcode
-    result = lookup_barcode(code, force_ai=force_ai)
+    result = lookup_barcode(code, use_cache=not skip_cache, force_ai=force_ai)
     return jsonify(result)
 
 
@@ -1023,9 +1031,9 @@ def settings_page():
             "preferred_code_type", "invoice_prefix",
         ]:
             if key in form:
+                # Use INSERT OR REPLACE — compatible with all schema versions
                 conn.execute(
-                    "INSERT INTO settings (key, value, user_id) VALUES (?, ?, ?) "
-                    "ON CONFLICT(key, user_id) DO UPDATE SET value = excluded.value",
+                    "INSERT OR REPLACE INTO settings (key, value, user_id) VALUES (?, ?, ?)",
                     (key, form.get(key, ""), user_id),
                 )
         conn.commit()
@@ -1036,6 +1044,7 @@ def settings_page():
     settings = get_settings(conn, user_id)
     conn.close()
     return render_template("settings.html", settings=settings, active="settings")
+
 
 
 # ---------------------------------------------------------------------------
@@ -1202,12 +1211,22 @@ if __name__ == "__main__":
         port = find_available_port(5000)
 
     url = f"http://127.0.0.1:{port}/"
+    # Detect WiFi IP for phone/tablet access
+    import socket as _socket
+    try:
+        _s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        _s.connect(("8.8.8.8", 80))
+        wifi_ip = _s.getsockname()[0]
+        _s.close()
+    except Exception:
+        wifi_ip = "<your-wifi-ip>"
+    wifi_url = f"http://{wifi_ip}:{port}/"
     print("\n" + "=" * 60)
     print(f"  AI INVENTORY MANAGER IS READY!")
-    print(f"  URL: {url}")
+    print(f"  Local:   {url}")
+    print(f"  Network: {wifi_url}  ← open this on your phone")
     if port != 5000:
-        print(f"  [NOTE] Port 5000 was in use by another app.")
-        print(f"         Automatically running on port {port} instead.")
+        print(f"  [NOTE] Port 5000 was in use. Running on port {port} instead.")
     print("=" * 60 + "\n")
 
     def auto_open_browser():
@@ -1215,5 +1234,5 @@ if __name__ == "__main__":
         webbrowser.open(url)
 
     threading.Thread(target=auto_open_browser, daemon=True).start()
-    app.run(debug=False, host="127.0.0.1", port=port)
+    app.run(debug=False, host="0.0.0.0", port=port)
 

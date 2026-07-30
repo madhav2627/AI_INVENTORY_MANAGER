@@ -93,6 +93,10 @@
   0%, 100% { top: 10%; opacity: .7; }
   50%       { top: 88%; opacity: 1; }
 }
+@keyframes pulse {
+  from { opacity: 0.5; transform: scale(0.96); }
+  to   { opacity: 1;   transform: scale(1); }
+}
 
 .camera-status-bar {
   position: absolute;
@@ -285,6 +289,7 @@
     Html5QrcodeSupportedFormats.ITF,
     Html5QrcodeSupportedFormats.CODE_93,
     Html5QrcodeSupportedFormats.CODABAR,
+    Html5QrcodeSupportedFormats.DATA_MATRIX,
   ];
 
   function el(id) { return document.getElementById(id); }
@@ -317,12 +322,19 @@
         updateStatus("No camera found.", false);
         return;
       }
+      // Prefer back/environment camera for better barcode scanning
       const cam = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[cameras.length - 1];
       return scanner.start(
         { deviceId: { exact: cam.id } },
-        { fps: 15, qrbox: { width: 220, height: 220 }, aspectRatio: 1.0, formatsToSupport: ALL_FORMATS },
+        {
+          fps: 10,              // ← was 15; lower fps = clearer frames = better decode
+          qrbox: { width: 300, height: 160 },  // ← wider box for EAN-13 (horizontal barcodes)
+          aspectRatio: 1.333,   // 4:3 is more natural for rear cameras
+          formatsToSupport: ALL_FORMATS,
+          experimentalFeatures: { useBarCodeDetectorIfSupported: true }, // use native BarcodeDetector API if available
+        },
         onScanSuccess,
-        () => {}
+        () => {}               // per-frame error: expected, suppress
       );
     }).then(() => {
       running = true;
@@ -332,7 +344,8 @@
       el("scan-ring-overlay").style.display = "flex";
       updateStatus("🟢 Ready — point at barcode.", true);
     }).catch(e => {
-      updateStatus("Camera access denied.", false);
+      console.error("Camera error:", e);
+      updateStatus("Camera access denied or not available.", false);
     });
   };
 
@@ -354,8 +367,25 @@
     if (s) s.innerHTML = `<div>${msg}</div>`;
   }
 
+  // ── Fetch with auto-retry ──────────────────────────────────────────────────
+  function fetchWithRetry(url, retries = 2, delayMs = 800) {
+    return fetch(url).then(r => {
+      if (r.ok) return r.json();
+      throw new Error(`HTTP ${r.status}`);
+    }).catch(err => {
+      if (retries <= 0) throw err;
+      return new Promise(resolve => setTimeout(resolve, delayMs))
+        .then(() => fetchWithRetry(url, retries - 1, delayMs * 1.5));
+    });
+  }
+
   function onScanSuccess(code) {
     if (!running || scanCooldown) return;
+
+    // Normalise: trim whitespace and control characters
+    code = (code || "").trim().replace(/[\r\n\t]/g, "");
+    if (!code) return;
+
     scanCooldown = true;
 
     // Feedback
@@ -364,13 +394,17 @@
     updateStat("scanned");
     updateStatus(`⚡ Scanning: <code style="font-family:monospace;font-size:11px;">${code}</code>`, true);
 
-    // Lookup
-    fetch(`/inventory/barcode_lookup?code=${encodeURIComponent(code)}`)
-      .then(r => r.ok ? r.json() : Promise.reject())
+    // Show a loading card while lookup is in progress
+    const loadingCardId = `loading-${Date.now()}`;
+    addLoadingCard(code, loadingCardId);
+
+    // Lookup — with automatic retry on network failure
+    fetchWithRetry(`/inventory/barcode_lookup?code=${encodeURIComponent(code)}`)
       .then(data => {
+        removeCard(loadingCardId);
+
         if (data._duplicate) {
           if (currentMode === "receive") {
-            // Auto-increase stock by 1 in receive mode
             fetch(`/inventory/stock_increase/${data._existing_id}`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -385,6 +419,15 @@
                 existingId: data._existing_id,
                 data: null,
               });
+            }).catch(() => {
+              addResultCard({
+                type: "duplicate",
+                code,
+                name: data._existing_name,
+                meta: `Already in inventory · Stock: ${data._existing_stock}`,
+                existingId: data._existing_id,
+                data: null,
+              });
             });
           } else {
             updateStat("updated");
@@ -392,7 +435,7 @@
               type: "duplicate",
               code,
               name: data._existing_name,
-              meta: `Already in inventory · Stock: ${data._existing_stock}`,
+              meta: `Already in inventory · Stock: ${data._existing_stock} ${data._existing_unit_label || "pcs"}`,
               existingId: data._existing_id,
               data: null,
             });
@@ -412,23 +455,59 @@
           addResultCard({
             type: "not-found",
             code,
-            name: "No product found",
-            meta: `Barcode: ${code}`,
+            name: "No product found in database",
+            meta: `Barcode: ${code} — try AI lookup or add manually`,
             data,
           });
         }
-        // Resume scanning
+
+        // Resume scanning after cooldown
         setTimeout(() => {
           scanCooldown = false;
           updateStatus("🟢 Ready — point at next barcode.", true);
-        }, 1200);
+        }, 1500); // ← increased from 1200ms to prevent double-reads
       })
       .catch(() => {
-        addResultCard({ type: "not-found", code, name: "Lookup failed", meta: "Check network" });
-        setTimeout(() => { scanCooldown = false; }, 1200);
+        removeCard(loadingCardId);
+        addResultCard({
+          type: "not-found",
+          code,
+          name: "Lookup failed",
+          meta: "Network error — tap Retry to try again",
+          data: { _found: false },
+          showRetry: true,
+        });
+        setTimeout(() => { scanCooldown = false; }, 1500);
       });
   }
 
+  // ── Loading card ──────────────────────────────────────────────────────────
+  function addLoadingCard(code, cardId) {
+    const panel = el("results-panel");
+    const empty = el("empty-results");
+    if (empty) empty.style.display = "none";
+
+    const card = document.createElement("div");
+    card.className = "scan-result-card";
+    card.id = cardId;
+    card.style.opacity = "0.7";
+    card.innerHTML = `
+      <div class="src-header">
+        <div class="src-img-placeholder" style="animation:pulse 1s infinite alternate;">⏳</div>
+        <div class="src-info">
+          <div class="src-name">Looking up product…</div>
+          <div class="src-meta" style="font-family:monospace;">${code}</div>
+        </div>
+      </div>`;
+    panel.insertBefore(card, panel.firstChild);
+  }
+
+  function removeCard(cardId) {
+    const card = document.getElementById(cardId);
+    if (card) card.remove();
+  }
+
+  // ── Result card ───────────────────────────────────────────────────────────
   function addResultCard(item) {
     const panel = el("results-panel");
     const empty = el("empty-results");
@@ -443,8 +522,6 @@
 
     let actionsHtml = "";
     if (item.type === "success") {
-      // Provide link to prefill add form
-      const params = new URLSearchParams({ code: item.code });
       actionsHtml = `
         <a href="/inventory/add" class="btn-add-stock" onclick="sessionStorage.setItem('prefill',JSON.stringify(${JSON.stringify(JSON.stringify(item.data || {}))}))">➕ Add to inventory</a>
         <button onclick="this.closest('.scan-result-card').remove()">✕ Dismiss</button>`;
@@ -454,7 +531,11 @@
         <a href="/inventory/edit/${item.existingId}">✏️ Edit</a>
         <button onclick="this.closest('.scan-result-card').remove()">✕</button>`;
     } else {
+      // Not-found card — include "Try AI Lookup" and optional Retry buttons
+      const retryAttr = item.showRetry ? `data-retry="1"` : "";
       actionsHtml = `
+        <button class="btn-add-stock" onclick="tryAiLookup('${item.code}', this)" title="Force AI prediction for this barcode">🤖 Try AI Lookup</button>
+        ${item.showRetry ? `<button onclick="retryLookup('${item.code}', this.closest('.scan-result-card'))" title="Retry online lookup">🔄 Retry</button>` : ""}
         <a href="/inventory/add">✏️ Add manually</a>
         <button onclick="this.closest('.scan-result-card').remove()">✕</button>`;
     }
@@ -476,6 +557,61 @@
     const cards = panel.querySelectorAll(".scan-result-card");
     if (cards.length > 20) cards[cards.length - 1].remove();
   }
+
+  // ── AI Lookup button handler ──────────────────────────────────────────────
+  window.tryAiLookup = function (code, btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Asking AI…";
+    const card = btn.closest(".scan-result-card");
+
+    fetch(`/inventory/barcode_lookup?code=${encodeURIComponent(code)}&force=1`)
+      .then(r => r.json())
+      .then(data => {
+        if (data._found && data.name) {
+          // Replace the not-found card with a success card
+          const nameEl = card.querySelector(".src-name");
+          const metaEl = card.querySelector(".src-meta");
+          if (nameEl) nameEl.textContent = data.name;
+          if (metaEl) metaEl.textContent = `${data.brand || ""} · ${data.category || ""} · via ${data.source_db || "AI"}`;
+          card.className = "scan-result-card success";
+          card.querySelector(".src-actions").innerHTML = `
+            <a href="/inventory/add" class="btn-add-stock" onclick="sessionStorage.setItem('prefill',JSON.stringify(${JSON.stringify(JSON.stringify(data))}))">➕ Add to inventory</a>
+            <button onclick="this.closest('.scan-result-card').remove()">✕ Dismiss</button>`;
+        } else {
+          btn.disabled = false;
+          btn.textContent = "🤖 AI: No match";
+        }
+      })
+      .catch(() => {
+        btn.disabled = false;
+        btn.textContent = "🤖 AI failed — retry";
+      });
+  };
+
+  // ── Retry online lookup ───────────────────────────────────────────────────
+  window.retryLookup = function (code, card) {
+    const nameEl = card.querySelector(".src-name");
+    const metaEl = card.querySelector(".src-meta");
+    if (nameEl) nameEl.textContent = "Retrying lookup…";
+
+    fetch(`/inventory/barcode_lookup?code=${encodeURIComponent(code)}&retry=1`)
+      .then(r => r.json())
+      .then(data => {
+        if (data._found && data.name) {
+          if (nameEl) nameEl.textContent = data.name;
+          if (metaEl) metaEl.textContent = `${data.brand || ""} · ${data.category || ""} · via ${data.source_db || "DB"}`;
+          card.className = "scan-result-card success";
+          card.querySelector(".src-actions").innerHTML = `
+            <a href="/inventory/add" class="btn-add-stock" onclick="sessionStorage.setItem('prefill',JSON.stringify(${JSON.stringify(JSON.stringify(data))}))">➕ Add to inventory</a>
+            <button onclick="this.closest('.scan-result-card').remove()">✕ Dismiss</button>`;
+        } else {
+          if (nameEl) nameEl.textContent = "Still not found — try AI or add manually";
+        }
+      })
+      .catch(() => {
+        if (nameEl) nameEl.textContent = "Retry failed — check connection";
+      });
+  };
 
   window.addStock = function (productId, btn) {
     btn.disabled = true;
@@ -503,3 +639,4 @@
 })();
 </script>
 {% endblock %}
+
