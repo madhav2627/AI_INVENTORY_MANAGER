@@ -247,50 +247,98 @@
     };
   }
 
+  // Camera scan result callback for Billing Counter
+  window.SCANNER_ON_RESULT = function (code) {
+    if (!code) return;
+    if (scanInput) scanInput.value = code;
+    window.lookupAndAdd(code);
+  };
+
   window.lookupAndAdd = function (code) {
+    if (!code) return;
+    flashScanStatus(`Scanning code ${code}...`, false);
+
     fetch(`/billing/lookup?code=${encodeURIComponent(code)}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data) => {
-        if (data.found) {
+      .then((r) => r.json().then((data) => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        if (data.found && data.product) {
           if (window.playScanBeep) window.playScanBeep();
           addToCart({
             id: data.product.id,
             name: data.product.name,
             price: data.product.unit_price,
             stock: data.product.stock_qty,
-            unit: data.product.unit_label,
+            unit: data.product.unit_label || "pcs",
           });
           flashScanStatus(`Added ${data.product.name} to the sale.`, false);
+        } else if (data.in_cache && data.cached_product) {
+          // Product exists in persistent barcode_cache -- pre-fill Quick Add modal with real data
+          const cp = data.cached_product;
+          if (aiModal) {
+            aiModal.classList.add("is-open");
+            aiAnalyzingState.style.display = "none";
+            aiResultState.style.display = "block";
+            aiProdCode.value = code;
+            aiProdName.value = cp.name || "";
+            aiProdCategory.value = cp.category || "General";
+            aiProdUnit.value = cp.unit_label || "pcs";
+            aiProdPrice.value = cp.unit_price || cp.mrp || "0.00";
+            aiProdCost.value = cp.cost_price || "0.00";
+            aiProdStock.value = cp.stock_qty || 10;
+            if (aiInferredRegion) aiInferredRegion.textContent = cp.source_db || "Global Database";
+            flashScanStatus(`📦 Real product details retrieved for ${cp.name}. Click 'Add to Inventory & Cart'.`, false);
+          }
+        } else {
+          // Code not in inventory or cache -> launch barcode lookup assistant
+          flashScanStatus(`Code not found in inventory. Searching databases...`, false);
+          if (aiModal) {
+            aiModal.classList.add("is-open");
+            aiAnalyzingState.style.display = "block";
+            aiResultState.style.display = "none";
+            aiProdCode.value = code;
+            if (aiCustomHint) aiCustomHint.value = "";
+
+            fetch(`/inventory/barcode_lookup?code=${encodeURIComponent(code)}`)
+              .then((r) => (r.ok ? r.json() : Promise.reject()))
+              .then((lookupRes) => {
+                if (lookupRes._found && lookupRes.name) {
+                  aiProdName.value = lookupRes.name;
+                  aiProdCategory.value = lookupRes.category || "General";
+                  aiProdUnit.value = lookupRes.unit_label || "pcs";
+                  aiProdPrice.value = lookupRes.unit_price || lookupRes.mrp || 0;
+                  aiProdCost.value = lookupRes.cost_price || 0;
+                  aiProdStock.value = lookupRes.stock_qty || 10;
+                  if (aiInferredRegion) aiInferredRegion.textContent = lookupRes.source_db || "Global DB";
+                } else if (lookupRes.brand) {
+                  aiProdName.value = "";
+                  aiProdCategory.value = lookupRes.category || "General";
+                  aiProdUnit.value = "pcs";
+                  aiProdPrice.value = 0;
+                  aiProdCost.value = 0;
+                  aiProdStock.value = 10;
+                  if (aiInferredRegion) aiInferredRegion.textContent = `GS1 India (${lookupRes.brand})`;
+                } else {
+                  aiProdName.value = "";
+                  aiProdCategory.value = "General";
+                  aiProdUnit.value = "pcs";
+                  aiProdPrice.value = 0;
+                  aiProdCost.value = 0;
+                  aiProdStock.value = 10;
+                  if (aiInferredRegion) aiInferredRegion.textContent = "Unknown Barcode";
+                }
+                aiAnalyzingState.style.display = "none";
+                aiResultState.style.display = "block";
+              })
+              .catch(() => {
+                flashScanStatus("Product lookup failed.", true);
+                closeAiModal();
+              });
+          }
         }
       })
-      .catch(() => {
-        flashScanStatus(`Code not found. AI scan assistant launched...`, false);
-        if (aiModal) {
-          aiModal.classList.add("is-open");
-          aiAnalyzingState.style.display = "block";
-          aiResultState.style.display = "none";
-          aiProdCode.value = code;
-          if (aiCustomHint) aiCustomHint.value = "";
-          
-          fetch(`/inventory/ai_lookup?code=${encodeURIComponent(code)}`)
-            .then(r => r.ok ? r.json() : Promise.reject())
-            .then(data => {
-              aiProdName.value = data.name;
-              aiProdCategory.value = data.category;
-              aiProdUnit.value = data.unit_label;
-              aiProdPrice.value = data.unit_price;
-              aiProdCost.value = data.cost_price;
-              aiProdStock.value = data.stock_qty;
-              aiInferredRegion.textContent = data.region_inferred;
-              
-              aiAnalyzingState.style.display = "none";
-              aiResultState.style.display = "block";
-            })
-            .catch(() => {
-              flashScanStatus("AI scan assistant failed to analyze.", true);
-              closeAiModal();
-            });
-        }
+      .catch((err) => {
+        console.error("POS lookup error:", err);
+        flashScanStatus("Error looking up barcode.", true);
       });
   };
 

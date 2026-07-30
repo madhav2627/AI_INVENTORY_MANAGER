@@ -274,14 +274,37 @@ def billing():
 def billing_lookup():
     user_id = get_current_user_id()
     code = request.args.get("code", "").strip()
+    if not code:
+        return jsonify({"found": False, "error": "No barcode provided"}), 400
+
+    from ml.barcode_lookup import _get_barcode_variants, _cache_get_any_variant
+    variants = _get_barcode_variants(code)
+
     conn = db.get_connection()
-    product = conn.execute(
-        "SELECT * FROM products WHERE code_value = ? AND user_id = ?", (code, user_id)
-    ).fetchone()
+    placeholders = ",".join("?" for _ in variants)
+    query = f"""
+        SELECT * FROM products 
+        WHERE user_id = ? 
+          AND (code_value IN ({placeholders}) OR barcode_raw IN ({placeholders}))
+        LIMIT 1
+    """
+    params = [user_id] + variants + variants
+    product = conn.execute(query, params).fetchone()
     conn.close()
-    if not product:
-        return jsonify({"found": False}), 404
-    return jsonify({"found": True, "product": dict(product)})
+
+    if product:
+        return jsonify({"found": True, "product": dict(product)})
+
+    # If not in user's inventory, check barcode_cache for real product details
+    cached = _cache_get_any_variant(variants)
+    if cached and cached.get("name"):
+        return jsonify({
+            "found": False,
+            "in_cache": True,
+            "cached_product": cached
+        }), 404
+
+    return jsonify({"found": False, "in_cache": False}), 404
 
 
 @app.route("/inventory/ai_lookup")
