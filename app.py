@@ -49,6 +49,15 @@ def ensure_auth():
         
     conn = db.get_connection()
     user = db.get_user_by_id(conn, user_id)
+    
+    # Vercel serverless session persistence fix:
+    # If the user session exists in their cookie but the ephemeral SQLite DB got wiped in /tmp,
+    # auto-seed the database and log them in as admin (ID 1) to prevent the constant logout loop.
+    if not user and os.environ.get("VERCEL"):
+        db.seed_default_admin(conn)
+        session["user_id"] = 1
+        user = db.get_user_by_id(conn, 1)
+        
     conn.close()
     if not user:
         session.clear()
@@ -63,10 +72,14 @@ def inject_user():
         try:
             conn = db.get_connection()
             user = db.get_user_by_id(conn, session.get("user_id"))
+            if not user and os.environ.get("VERCEL"):
+                db.seed_default_admin(conn)
+                user = db.get_user_by_id(conn, 1)
             conn.close()
         except Exception:
             user = None
     return dict(current_user=user)
+
 
 
 # ---------------------------------------------------------------------------
