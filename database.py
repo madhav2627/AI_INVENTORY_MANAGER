@@ -9,7 +9,15 @@ import json
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "data", "store.db")
+
+# On Vercel, serverless filesystem is read-only. We must write SQLite to /tmp.
+if os.environ.get("VERCEL"):
+    DB_PATH = "/tmp/store.db"
+    # Ensure parent dir exists
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+else:
+    DB_PATH = os.path.join(BASE_DIR, "data", "store.db")
+
 
 # New columns to add to the products table (for migration on existing DBs)
 PRODUCTS_NEW_COLUMNS = [
