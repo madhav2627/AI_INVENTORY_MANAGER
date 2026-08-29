@@ -51,3 +51,11 @@ data/*.json
 # Operating System
 .DS_Store
 Thumbs.db
+
+# Temporary Development / Local Testing Files
+cert.pem
+key.pem
+cloudflared.exe
+ngrok.exe
+gen_cert.py
+

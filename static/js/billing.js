@@ -205,14 +205,33 @@
     });
   });
 
-  // Scan input (USB scanner behaves like a keyboard + Enter)
+  // Scan input — USB scanner fires a rapid burst of characters + Enter.
+  // We listen on both keydown (for Enter key) and a change guard.
+  let _scanInputBuffer = "";
+  let _scanInputTimer  = null;
+
   scanInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
+      clearTimeout(_scanInputTimer);
       const code = scanInput.value.trim();
       scanInput.value = "";
+      _scanInputBuffer = "";
       if (!code) return;
       lookupAndAdd(code);
     }
+  });
+
+  // Some USB scanners/Bluetooth scanners do not always fire a keydown 'Enter';
+  // detect rapid input completion via a short debounce fallback.
+  scanInput.addEventListener("input", () => {
+    clearTimeout(_scanInputTimer);
+    _scanInputTimer = setTimeout(() => {
+      const code = scanInput.value.trim();
+      if (code && code.length >= 4) {
+        scanInput.value = "";
+        lookupAndAdd(code);
+      }
+    }, 120); // 120ms — typical scanner fires all chars in <80ms
   });
 
   const aiCustomHint = document.getElementById("ai-custom-hint");
@@ -248,9 +267,17 @@
   }
 
   // Camera scan result callback for Billing Counter
+  // The scanner.js already closes the modal after calling this; we just process.
   window.SCANNER_ON_RESULT = function (code) {
     if (!code) return;
-    if (scanInput) scanInput.value = code;
+    code = code.trim();
+    if (!code) return;
+    // Put code into input for visual feedback
+    if (scanInput) {
+      scanInput.value = code;
+      // Clear after a moment so the field is ready for next scan
+      setTimeout(() => { if (scanInput) scanInput.value = ""; }, 2000);
+    }
     window.lookupAndAdd(code);
   };
 
@@ -271,6 +298,8 @@
             unit: data.product.unit_label || "pcs",
           });
           flashScanStatus(`Added ${data.product.name} to the sale.`, false);
+          // Show mobile toast for quick visual confirmation
+          showMobileToast(`✅ ${data.product.name} added to cart`);
         } else if (data.in_cache && data.cached_product) {
           // Product exists in persistent barcode_cache -- pre-fill Quick Add modal with real data
           const cp = data.cached_product;
@@ -513,4 +542,14 @@
   }
 
   renderCart();
+
+  // ── Mobile Toast helper ─────────────────────────────────────────────────
+  function showMobileToast(msg) {
+    const toast = document.getElementById("ai-toast");
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.classList.add("is-visible");
+    clearTimeout(showMobileToast._timer);
+    showMobileToast._timer = setTimeout(() => toast.classList.remove("is-visible"), 2500);
+  }
 })();

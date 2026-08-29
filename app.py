@@ -1233,7 +1233,6 @@ if __name__ == "__main__":
     if not port:
         port = find_available_port(5000)
 
-    url = f"http://127.0.0.1:{port}/"
     # Detect WiFi IP for phone/tablet access
     import socket as _socket
     try:
@@ -1243,19 +1242,37 @@ if __name__ == "__main__":
         _s.close()
     except Exception:
         wifi_ip = "<your-wifi-ip>"
-    wifi_url = f"http://{wifi_ip}:{port}/"
+
+    # Use HTTPS so mobile browsers allow camera access (getUserMedia requires secure origin)
+    # Set use_https = False when using ngrok (ngrok provides its own HTTPS)
+    use_https = False
+    scheme = "https" if use_https else "http"
+    url      = f"{scheme}://127.0.0.1:{port}/"
+    wifi_url = f"{scheme}://{wifi_ip}:{port}/"
+
     print("\n" + "=" * 60)
     print(f"  AI INVENTORY MANAGER IS READY!")
     print(f"  Local:   {url}")
-    print(f"  Network: {wifi_url}  ← open this on your phone")
+    print(f"  Network: {wifi_url}")
+    print(f"  For mobile camera: use ngrok -> run: ngrok http {port}")
     if port != 5000:
         print(f"  [NOTE] Port 5000 was in use. Running on port {port} instead.")
     print("=" * 60 + "\n")
 
     def auto_open_browser():
-        time.sleep(1.2)
+        time.sleep(1.5)
         webbrowser.open(url)
 
     threading.Thread(target=auto_open_browser, daemon=True).start()
-    app.run(debug=False, host="0.0.0.0", port=port)
+
+    ssl_ctx = None
+    if use_https:
+        # Use generated cert files if available (more reliable than 'adhoc')
+        cert_file = os.path.join(os.path.dirname(__file__), "cert.pem")
+        key_file  = os.path.join(os.path.dirname(__file__), "key.pem")
+        if os.path.exists(cert_file) and os.path.exists(key_file):
+            ssl_ctx = (cert_file, key_file)
+        else:
+            ssl_ctx = "adhoc"  # fallback
+    app.run(debug=False, host="0.0.0.0", port=port, ssl_context=ssl_ctx)
 

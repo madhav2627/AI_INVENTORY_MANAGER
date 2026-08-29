@@ -1201,28 +1201,33 @@ input:focus, select:focus, textarea:focus {
     background: var(--paper);
     padding: 4px;
     border-radius: var(--radius-sm);
-    margin-bottom: 20px;
+    margin-bottom: 16px;
     border: 1.5px solid var(--border);
+    position: sticky;
+    top: 56px; /* below mobile header */
+    z-index: 20;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
   }
   .pos-tab-btn {
     border: none;
     background: transparent;
-    padding: 10px;
+    padding: 12px 8px;
     border-radius: 8px;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 14px;
     color: var(--text-2);
     cursor: pointer;
     transition: all 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
+    min-height: 44px; /* minimum touch target */
   }
   .pos-tab-btn.is-active {
     background: var(--surface);
     color: var(--brass-deep);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
   }
   .pos-tab-btn .badge {
     margin-left: 2px;
@@ -1242,9 +1247,10 @@ input:focus, select:focus, textarea:focus {
     display: block;
     position: static;
     box-shadow: none;
+    padding-bottom: 100px; /* space for checkout button */
   }
 
-  /* Mobile POS floating checkout footer */
+  /* Mobile POS floating checkout footer — FIXED: show any time cart has items */
   .mobile-checkout-footer {
     position: fixed;
     bottom: 0;
@@ -1252,22 +1258,107 @@ input:focus, select:focus, textarea:focus {
     right: 0;
     background: var(--surface);
     border-top: 1px solid var(--border);
-    padding: 12px 16px;
+    padding: 10px 16px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
     z-index: 80;
-    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.08);
+    display: none; /* hidden by default */
   }
-  .pos-grid:not(.show-cart) .mobile-checkout-footer.is-visible {
+  /* Show footer on catalog tab when cart has items */
+  .mobile-checkout-footer.is-visible {
     display: block;
   }
-
-  .scan-bar button {
-    padding: 10px;
+  /* Hide footer when on cart tab (cart panel is visible, its own checkout btn shown) */
+  .pos-grid.show-cart ~ .mobile-checkout-footer,
+  .pos-grid.show-cart .mobile-checkout-footer {
+    display: none !important;
   }
-  /* Shorten text on small scan button */
+
+  .mobile-checkout-btn {
+    width: 100%;
+    padding: 14px 16px;
+    font-size: 15px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* Bigger touch targets for scan bar */
+  .scan-bar {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .scan-bar input {
+    font-size: 15px;
+    padding: 13px 14px;
+  }
+  .scan-bar button {
+    padding: 13px 14px;
+    min-width: 50px;
+    flex-shrink: 0;
+  }
+  /* Hide button text label on small screens, keep icon */
   .scan-bar button span {
     display: none;
   }
+  /* Bigger product tiles for touch */
+  .product-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+  }
+  .product-tile {
+    padding: 14px;
+    min-height: 80px;
+  }
+  .product-tile .p-name {
+    font-size: 13.5px;
+  }
+  /* Cart line touch targets */
+  .cart-line {
+    padding: 12px 6px;
+    gap: 8px;
+  }
+  .qty-control button {
+    width: 34px;
+    height: 34px;
+    font-size: 18px;
+  }
+  /* Summary inputs bigger */
+  .summary-row input {
+    width: 90px;
+    font-size: 14px;
+    padding: 8px 10px;
+  }
+  /* Checkout button full width on cart view */
+  #checkout-btn {
+    width: 100%;
+    padding: 15px;
+    font-size: 15px;
+    margin-top: 16px;
+  }
+  /* Modal adjustments for mobile */
+  .modal-box {
+    width: 100% !important;
+    max-height: 90vh;
+    overflow-y: auto;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    margin: 0 !important;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+  }
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+  #scanner-viewport {
+    min-height: 200px;
+    max-height: 50vh;
+  }
 }
+
 
 @media (max-width: 600px) {
   /* Stack Alert rows */
@@ -1285,6 +1376,16 @@ input:focus, select:focus, textarea:focus {
   .alert-row .mono {
     font-size: 14px;
   }
+  /* Tables: make them scrollable */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -4px;
+    padding: 0 4px;
+  }
+  /* Smaller page head on small screens */
+  .page-head h1 { font-size: 22px; }
+  .page-head p { font-size: 13px; }
 }
 
 @media (max-width: 576px) {
@@ -1313,6 +1414,25 @@ input:focus, select:focus, textarea:focus {
   .hero-card div:last-child {
     text-align: left !important;
   }
+  /* Main content padding on tiny screens */
+  .main { padding: 16px 12px 100px; }
+  /* Card padding smaller */
+  .card { padding: 16px; }
+  /* Form grid always 1 column */
+  .form-grid { grid-template-columns: 1fr !important; }
+  /* Buttons full-width in form actions */
+  .form-actions {
+    flex-direction: column;
+  }
+  .form-actions .btn { width: 100%; justify-content: center; }
+}
+
+/* Very small phones (< 400px) */
+@media (max-width: 400px) {
+  .pos-tab-btn { font-size: 12px; padding: 10px 6px; gap: 4px; }
+  .product-grid { grid-template-columns: repeat(2, 1fr); }
+  .product-tile { padding: 10px; }
+  .mobile-header .brand-name { font-size: 15px; }
 }
 
 /* ==========================================================================
