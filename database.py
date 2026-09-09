@@ -274,8 +274,51 @@ def _postgres_sql(sql):
     return sql.replace("?", "%s")
 
 
+class PostgresRow:
+    """A row wrapper that behaves identically to sqlite3.Row for dict, key, and sequence access."""
+    __slots__ = ("_data", "_index_map")
+
+    def __init__(self, description, row_tuple):
+        self._data = row_tuple
+        if description:
+            self._index_map = {
+                (col.name if hasattr(col, "name") else col[0]): i
+                for i, col in enumerate(description)
+            }
+        else:
+            self._index_map = {}
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            idx = self._index_map.get(key)
+            if idx is None:
+                idx = self._index_map.get(key.lower())
+            if idx is None:
+                raise KeyError(key)
+            return self._data[idx]
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
+
+    def keys(self):
+        return self._index_map.keys()
+
+    def get(self, key, default=None):
+        idx = self._index_map.get(key)
+        if idx is None:
+            idx = self._index_map.get(key.lower())
+        return self._data[idx] if idx is not None else default
+
+    def __contains__(self, key):
+        return key in self._index_map or (isinstance(key, str) and key.lower() in self._index_map)
+
+
 class PostgresCursor:
-    """sqlite3-like cursor used to keep the route layer database-agnostic."""
+    """sqlite3-like cursor used to keep the route layer and pandas database-agnostic."""
     def __init__(self, cursor):
         self._cursor = cursor
         self.lastrowid = None
@@ -290,14 +333,28 @@ class PostgresCursor:
         self._cursor.execute(statement, params or ())
         if is_insert and has_numeric_id:
             row = self._cursor.fetchone()
-            self.lastrowid = row["id"] if row else None
+            if row is not None:
+                self.lastrowid = row[0] if isinstance(row, (tuple, list)) else (row.get("id") if hasattr(row, "get") else row[0])
+            else:
+                self.lastrowid = None
         return self
 
     def fetchone(self):
-        return self._cursor.fetchone()
+        row = self._cursor.fetchone()
+        if row is None:
+            return None
+        if self._cursor.description:
+            return PostgresRow(self._cursor.description, row)
+        return row
 
     def fetchall(self):
-        return self._cursor.fetchall()
+        rows = self._cursor.fetchall()
+        if not rows:
+            return []
+        if self._cursor.description:
+            desc = self._cursor.description
+            return [PostgresRow(desc, r) for r in rows]
+        return rows
 
     def __getattr__(self, name):
         return getattr(self._cursor, name)
@@ -316,9 +373,6 @@ class PostgresConnection:
 
     def executescript(self, script):
         with self._connection.cursor() as cursor:
-            # PostgreSQL drivers execute one statement at a time.  The schema
-            # contains no semicolons inside literals, so this keeps the same
-            # convenient SQLite executescript behaviour.
             for statement in script.split(";"):
                 if statement.strip():
                     cursor.execute(statement)
@@ -332,7 +386,7 @@ class PostgresConnection:
 
 def get_connection():
     if USING_POSTGRES:
-        return PostgresConnection(psycopg.connect(DATABASE_URL, row_factory=dict_row))
+        return PostgresConnection(psycopg.connect(DATABASE_URL))
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

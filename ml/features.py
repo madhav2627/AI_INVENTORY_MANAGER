@@ -27,7 +27,8 @@ def load_daily_sales(conn):
     df = pd.read_sql_query(query, conn)
     if df.empty:
         return df
-    df["sale_date"] = pd.to_datetime(df["sale_date"])
+    df["sale_date"] = pd.to_datetime(df["sale_date"], errors="coerce")
+    df = df.dropna(subset=["sale_date"])
     return df
 
 

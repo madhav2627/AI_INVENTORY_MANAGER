@@ -60,15 +60,28 @@ def _heuristic_demand(conn, user_id=None):
         df = pd.read_sql_query(query, conn)
     results = {}
     for _, row in df.iterrows():
-        if row["first_sale"] and row["last_sale"]:
-            days_span = max(
-                1,
-                (pd.to_datetime(row["last_sale"]) - pd.to_datetime(row["first_sale"])).days + 1,
-            )
-        else:
-            days_span = 1
-        avg_daily = row["total_sold"] / days_span if row["total_sold"] else 0.0
-        results[int(row["product_id"])] = {
+        first_sale = row["first_sale"] if "first_sale" in row else None
+        last_sale = row["last_sale"] if "last_sale" in row else None
+        days_span = 1
+        if pd.notna(first_sale) and pd.notna(last_sale) and str(first_sale).strip() and str(last_sale).strip():
+            try:
+                first_dt = pd.to_datetime(first_sale, errors="coerce")
+                last_dt = pd.to_datetime(last_sale, errors="coerce")
+                if pd.notna(first_dt) and pd.notna(last_dt):
+                    days_span = max(1, (last_dt - first_dt).days + 1)
+            except Exception:
+                days_span = 1
+        total_sold = row["total_sold"] if "total_sold" in row and pd.notna(row["total_sold"]) else 0.0
+        try:
+            total_sold = float(total_sold)
+        except Exception:
+            total_sold = 0.0
+        avg_daily = total_sold / days_span if total_sold else 0.0
+        try:
+            pid = int(row["product_id"])
+        except Exception:
+            continue
+        results[pid] = {
             "predicted_daily_demand": round(float(avg_daily), 2),
             "method": "heuristic",
         }
