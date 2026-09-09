@@ -44,12 +44,14 @@ OPEN_ENDPOINTS = {'login', 'register', 'static'}
 
 @app.before_request
 def ensure_auth():
-    # Vercel functions do not share a writable filesystem.  Initialising the
-    # configured persistent database is safe and idempotent on each cold start.
+    # Bypass all database operations for static assets
+    if request.path.startswith('/static/'):
+        return None
+
     db.ensure_initialized()
         
     endpoint = request.endpoint or ''
-    if endpoint in OPEN_ENDPOINTS or endpoint.startswith('static'):
+    if endpoint in OPEN_ENDPOINTS:
         return None
         
     user_id = session.get("user_id")
@@ -58,8 +60,6 @@ def ensure_auth():
         
     conn = db.get_connection()
     user = db.get_user_by_id(conn, user_id)
-    
-    conn.close()
     if not user:
         session.clear()
         return redirect(url_for("login"))
@@ -73,10 +73,31 @@ def inject_user():
         try:
             conn = db.get_connection()
             user = db.get_user_by_id(conn, session.get("user_id"))
-            conn.close()
+            g.user = user
         except Exception:
             user = None
     return dict(current_user=user)
+
+
+@app.teardown_appcontext
+def teardown_db(exception=None):
+    conn = getattr(g, '_db_conn', None)
+    if conn is not None:
+        if hasattr(conn, 'force_close'):
+            conn.force_close()
+        else:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        g._db_conn = None
+
+
+@app.after_request
+def set_performance_headers(response):
+    if request.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return response
 
 
 
@@ -1103,7 +1124,7 @@ def ai_report():
     user_id = get_current_user_id()
     conn = db.get_connection()
     settings = get_settings(conn, user_id)
-    report = ai_engine.run_full_analysis(conn, settings)
+    report = ai_engine.run_full_analysis(conn, settings, user_id=user_id)
     conn.close()
     return jsonify(report)
 

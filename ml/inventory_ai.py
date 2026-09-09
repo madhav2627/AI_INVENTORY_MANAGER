@@ -27,12 +27,13 @@ from ml.predict import get_intelligence
 
 # ── 1. Demand Forecasting ─────────────────────────────────────────────────
 
-def get_demand_forecast(conn):
+def get_demand_forecast(conn, intel=None):
     """
     Returns per-product demand predictions for next day, week, and month.
     Uses the existing ML model / heuristic pipeline from predict.py.
     """
-    intel = get_intelligence(conn)
+    if intel is None:
+        intel = get_intelligence(conn)
     forecasts = []
     for pid, info in intel.items():
         daily = info["predicted_daily_demand"]
@@ -52,7 +53,7 @@ def get_demand_forecast(conn):
 
 # ── 2. Predictive Stock Detection ─────────────────────────────────────────
 
-def get_stockout_predictions(conn):
+def get_stockout_predictions(conn, intel=None):
     """
     Classifies each product into urgency tiers:
       - critical: ≤3 days to stockout
@@ -60,7 +61,8 @@ def get_stockout_predictions(conn):
       - caution:  ≤14 days to stockout
       - safe:     >14 days or no demand
     """
-    intel = get_intelligence(conn)
+    if intel is None:
+        intel = get_intelligence(conn)
     predictions = []
     for pid, info in intel.items():
         days = info["days_to_stockout"]
@@ -92,7 +94,7 @@ def get_stockout_predictions(conn):
 
 # ── 3. Restocking Recommendations ─────────────────────────────────────────
 
-def get_restock_recommendations(conn, settings):
+def get_restock_recommendations(conn, settings, intel=None):
     """
     Calculates optimal reorder quantities using:
       reorder_qty = max(0, (daily_demand × lead_time × safety_multiplier) + reorder_level − current_stock)
@@ -100,7 +102,8 @@ def get_restock_recommendations(conn, settings):
     """
     lead_time = float(settings.get("lead_time_days", "3"))
     safety_mult = float(settings.get("safety_stock_multiplier", "1.5"))
-    intel = get_intelligence(conn)
+    if intel is None:
+        intel = get_intelligence(conn)
     recommendations = []
 
     for pid, info in intel.items():
@@ -614,32 +617,77 @@ def generate_purchase_orders(conn, settings, user_id=1):
 
 # ── 9. Unified Intelligence Report ───────────────────────────────────────
 
-def run_full_analysis(conn, settings):
+def run_full_analysis(conn, settings, user_id=None):
     """
     Orchestrates all AI modules and returns a complete intelligence report.
+    Reuses intelligence data across modules to maximize performance.
     """
-    # Core analyses
-    stockout = get_stockout_predictions(conn)
-    demand = get_demand_forecast(conn)
-    restock = get_restock_recommendations(conn, settings)
-    anomalies = detect_anomalies(conn)
-    dead_slow = detect_dead_slow_stock(conn, settings)
-    warehouses = get_warehouse_optimization(conn)
+    # Core intelligence computed ONCE
+    try:
+        intel = get_intelligence(conn, user_id=user_id)
+    except Exception:
+        intel = {}
+
+    try:
+        stockout = get_stockout_predictions(conn, intel=intel)
+    except Exception:
+        stockout = []
+
+    try:
+        demand = get_demand_forecast(conn, intel=intel)
+    except Exception:
+        demand = []
+
+    try:
+        restock = get_restock_recommendations(conn, settings, intel=intel)
+    except Exception:
+        restock = []
+
+    try:
+        anomalies = detect_anomalies(conn)
+    except Exception:
+        anomalies = []
+
+    try:
+        dead_slow = detect_dead_slow_stock(conn, settings)
+    except Exception:
+        dead_slow = {"dead_stock": [], "slow_moving": []}
+
+    try:
+        warehouses = get_warehouse_optimization(conn)
+    except Exception:
+        warehouses = {"warehouses": [], "suggestions": [], "message": ""}
 
     # Summary counts
-    critical_count = sum(1 for s in stockout if s["urgency"] == "critical")
-    warning_count = sum(1 for s in stockout if s["urgency"] == "warning")
-    safe_count = sum(1 for s in stockout if s["urgency"] == "safe")
+    critical_count = sum(1 for s in stockout if s.get("urgency") == "critical")
+    warning_count = sum(1 for s in stockout if s.get("urgency") == "warning")
+    safe_count = sum(1 for s in stockout if s.get("urgency") == "safe")
 
     # Recent agent log
-    log_rows = conn.execute(
-        "SELECT * FROM ai_agent_log ORDER BY id DESC LIMIT 20"
-    ).fetchall()
+    try:
+        if user_id is not None:
+            log_rows = conn.execute(
+                "SELECT * FROM ai_agent_log WHERE user_id = ? ORDER BY id DESC LIMIT 20", (user_id,)
+            ).fetchall()
+        else:
+            log_rows = conn.execute(
+                "SELECT * FROM ai_agent_log ORDER BY id DESC LIMIT 20"
+            ).fetchall()
+    except Exception:
+        log_rows = []
 
     # Active POs
-    po_rows = conn.execute(
-        "SELECT * FROM purchase_orders WHERE status IN ('draft', 'sent') ORDER BY id DESC LIMIT 10"
-    ).fetchall()
+    try:
+        if user_id is not None:
+            po_rows = conn.execute(
+                "SELECT * FROM purchase_orders WHERE user_id = ? AND status IN ('draft', 'sent') ORDER BY id DESC LIMIT 10", (user_id,)
+            ).fetchall()
+        else:
+            po_rows = conn.execute(
+                "SELECT * FROM purchase_orders WHERE status IN ('draft', 'sent') ORDER BY id DESC LIMIT 10"
+            ).fetchall()
+    except Exception:
+        po_rows = []
 
     return {
         "summary": {
@@ -648,8 +696,8 @@ def run_full_analysis(conn, settings):
             "warning": warning_count,
             "safe": safe_count,
             "anomaly_count": len(anomalies),
-            "dead_stock_count": len(dead_slow["dead_stock"]),
-            "slow_moving_count": len(dead_slow["slow_moving"]),
+            "dead_stock_count": len(dead_slow.get("dead_stock", [])),
+            "slow_moving_count": len(dead_slow.get("slow_moving", [])),
             "restock_needed": len(restock),
             "analyzed_at": datetime.now().isoformat(timespec="seconds"),
         },
@@ -657,8 +705,8 @@ def run_full_analysis(conn, settings):
         "demand_forecast": demand[:15],
         "restock_recommendations": restock[:20],
         "anomalies": anomalies[:20],
-        "dead_stock": dead_slow["dead_stock"][:15],
-        "slow_moving": dead_slow["slow_moving"][:15],
+        "dead_stock": dead_slow.get("dead_stock", [])[:15],
+        "slow_moving": dead_slow.get("slow_moving", [])[:15],
         "warehouses": warehouses,
         "purchase_orders": [dict(po) for po in po_rows],
         "agent_log": [dict(l) for l in log_rows],

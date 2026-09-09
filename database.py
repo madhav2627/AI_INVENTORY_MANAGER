@@ -13,7 +13,16 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # SQLite remains the offline/local option.  Vercel deployments must use a
 # managed PostgreSQL database because /tmp is discarded between function runs.
-DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL")
+# Prioritize Neon connection pooler to eliminate TCP/TLS handshake latency in serverless.
+DATABASE_URL = None
+for _env_key in ("POSTGRES_URL", "DATABASE_URL", "POSTGRES_PRISMA_URL"):
+    _val = os.environ.get(_env_key)
+    if _val and "-pooler." in _val:
+        DATABASE_URL = _val
+        break
+if not DATABASE_URL:
+    DATABASE_URL = os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE_URL")
+
 USING_POSTGRES = bool(DATABASE_URL)
 DB_PATH = None if USING_POSTGRES else os.path.join(BASE_DIR, "data", "store.db")
 
@@ -381,10 +390,45 @@ class PostgresConnection:
         self._connection.commit()
 
     def close(self):
-        self._connection.close()
+        try:
+            from flask import has_request_context
+            if has_request_context():
+                # In active HTTP request context, keep connection open until request completes
+                return
+        except Exception:
+            pass
+        try:
+            self._connection.close()
+        except Exception:
+            pass
+
+    def force_close(self):
+        try:
+            self._connection.close()
+        except Exception:
+            pass
 
 
 def get_connection():
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            if hasattr(g, '_db_conn') and g._db_conn is not None:
+                conn = g._db_conn
+                is_closed = getattr(conn, 'closed', False) or getattr(getattr(conn, '_connection', None), 'closed', False)
+                if not is_closed:
+                    return conn
+            if USING_POSTGRES:
+                conn = PostgresConnection(psycopg.connect(DATABASE_URL))
+            else:
+                conn = sqlite3.connect(DB_PATH)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON")
+            g._db_conn = conn
+            return conn
+    except Exception:
+        pass
+
     if USING_POSTGRES:
         return PostgresConnection(psycopg.connect(DATABASE_URL))
     conn = sqlite3.connect(DB_PATH)
@@ -402,12 +446,14 @@ TABLES_WITH_USER_ID = [
 def _migrate_user_id_columns(conn):
     """Safely add user_id column to existing tables for multi-tenant data isolation."""
     if USING_POSTGRES:
-        for table_name in TABLES_WITH_USER_ID:
-            conn.execute(
-                "ALTER TABLE " + table_name + " ADD COLUMN IF NOT EXISTS user_id INTEGER NOT NULL DEFAULT 1"
-            )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_products_user ON products(user_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_user ON transactions(user_id)")
+        stmts = [
+            f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS user_id INTEGER NOT NULL DEFAULT 1"
+            for table_name in TABLES_WITH_USER_ID
+        ] + [
+            "CREATE INDEX IF NOT EXISTS idx_products_user ON products(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_txn_user ON transactions(user_id)"
+        ]
+        conn.executescript("; ".join(stmts))
         return
     for table_name in TABLES_WITH_USER_ID:
         try:
@@ -426,8 +472,11 @@ def _migrate_user_id_columns(conn):
 def _migrate_products_columns(conn):
     """Safely add new columns to products table if they don't exist yet."""
     if USING_POSTGRES:
-        for col_name, col_def in PRODUCTS_NEW_COLUMNS:
-            conn.execute(f"ALTER TABLE products ADD COLUMN IF NOT EXISTS {col_name} {col_def}")
+        stmts = [
+            f"ALTER TABLE products ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
+            for col_name, col_def in PRODUCTS_NEW_COLUMNS
+        ]
+        conn.executescript("; ".join(stmts))
         return
     existing = {row[1] for row in conn.execute("PRAGMA table_info(products)").fetchall()}
     for col_name, col_def in PRODUCTS_NEW_COLUMNS:
@@ -525,10 +574,17 @@ def init_db():
             "ON expiry_alerts(user_id, product_id)"
         )
     restore_users_from_json(conn)
-    for key, value in DEFAULT_SETTINGS.items():
-        conn.execute(
-            "INSERT OR IGNORE INTO settings (key, value, user_id) VALUES (?, ?, 1)", (key, value)
-        )
+    if USING_POSTGRES:
+        stmts = [
+            f"INSERT INTO settings (key, value, user_id) VALUES ('{k}', '{v}', 1) ON CONFLICT (key, user_id) DO NOTHING"
+            for k, v in DEFAULT_SETTINGS.items()
+        ]
+        conn.executescript("; ".join(stmts))
+    else:
+        for key, value in DEFAULT_SETTINGS.items():
+            conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value, user_id) VALUES (?, ?, 1)", (key, value)
+            )
     conn.commit()
     seed_default_admin(conn)
     conn.close()
@@ -538,9 +594,19 @@ _initialized = False
 
 
 def ensure_initialized():
-    """Initialise once per process; schema creation is idempotent for cold starts."""
+    """Initialise once per process; fast probe avoids redundant DDL round-trips on warm/cold starts."""
     global _initialized
     if not _initialized:
+        if USING_POSTGRES:
+            try:
+                conn = get_connection()
+                # Fast probe: if 'products' exists, schema is already provisioned
+                conn.execute("SELECT 1 FROM products LIMIT 1")
+                conn.close()
+                _initialized = True
+                return
+            except Exception:
+                pass
         init_db()
         _initialized = True
 
