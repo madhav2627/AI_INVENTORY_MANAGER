@@ -7,3 +7,6 @@ pandas
 scikit-learn
 joblib
 gunicorn
+# Persistent PostgreSQL database for Vercel deployments. The binary extra
+# avoids compiling a driver during the serverless build.
+psycopg[binary]>=3.2,<4

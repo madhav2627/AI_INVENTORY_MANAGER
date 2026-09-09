@@ -11,6 +11,7 @@ Then open: http://127.0.0.1:5000
 import io
 import json
 import os
+from datetime import timedelta
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -25,7 +26,14 @@ from ml import inventory_ai as ai_engine
 import codegen
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "ai-inventory-manager-secret-key-2026")
+# Session secret key: reads from Vercel environment variable, with a persistent fallback
+app.secret_key = os.environ.get("SECRET_KEY") or "ai-inv-secret-prod-42e0c1f8b24f44929cf6a1fb0b146ca533c9f694cf678859"
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(os.environ.get("VERCEL")),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -36,8 +44,9 @@ OPEN_ENDPOINTS = {'login', 'register', 'static'}
 
 @app.before_request
 def ensure_auth():
-    if not os.path.exists(db.DB_PATH):
-        db.init_db()
+    # Vercel functions do not share a writable filesystem.  Initialising the
+    # configured persistent database is safe and idempotent on each cold start.
+    db.ensure_initialized()
         
     endpoint = request.endpoint or ''
     if endpoint in OPEN_ENDPOINTS or endpoint.startswith('static'):
@@ -50,14 +59,6 @@ def ensure_auth():
     conn = db.get_connection()
     user = db.get_user_by_id(conn, user_id)
     
-    # Vercel serverless session persistence fix:
-    # If the user session exists in their cookie but the ephemeral SQLite DB got wiped in /tmp,
-    # auto-seed the database and log them in as admin (ID 1) to prevent the constant logout loop.
-    if not user and os.environ.get("VERCEL"):
-        db.seed_default_admin(conn)
-        session["user_id"] = 1
-        user = db.get_user_by_id(conn, 1)
-        
     conn.close()
     if not user:
         session.clear()
@@ -72,9 +73,6 @@ def inject_user():
         try:
             conn = db.get_connection()
             user = db.get_user_by_id(conn, session.get("user_id"))
-            if not user and os.environ.get("VERCEL"):
-                db.seed_default_admin(conn)
-                user = db.get_user_by_id(conn, 1)
             conn.close()
         except Exception:
             user = None
@@ -107,6 +105,8 @@ def login():
         elif not check_password_hash(user["password_hash"], password):
             flash("Incorrect password. Please try again.", "danger")
         else:
+            session.clear()
+            session.permanent = True
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             session["full_name"] = user["full_name"]
@@ -140,6 +140,8 @@ def register():
             else:
                 user_id = db.create_user(conn, username, password, full_name, role="admin")
                 conn.close()
+                session.clear()
+                session.permanent = True
                 session["user_id"] = user_id
                 session["username"] = username
                 session["full_name"] = full_name
@@ -687,7 +689,7 @@ def inventory_add():
             conn.close()
             flash("Item added to inventory.", "success")
             return redirect(url_for("inventory"))
-        except db.sqlite3.IntegrityError:
+        except db.IntegrityError:
             conn.close()
             flash("That barcode/QR value is already assigned to another item.", "error")
             return redirect(url_for("inventory_add"))
@@ -768,7 +770,7 @@ def inventory_edit(product_id):
             conn.close()
             flash("Item updated.", "success")
             return redirect(url_for("inventory"))
-        except db.sqlite3.IntegrityError:
+        except db.IntegrityError:
             conn.close()
             flash("That barcode/QR value is already assigned to another item.", "error")
             return redirect(url_for("inventory_edit", product_id=product_id))
@@ -894,7 +896,7 @@ def barcode_create_product():
         )
         conn.commit()
         product_id = cur.lastrowid
-    except db.sqlite3.IntegrityError:
+    except db.IntegrityError:
         conn.close()
         return jsonify({"error": "That code is already assigned to another item."}), 400
     conn.close()
@@ -917,7 +919,7 @@ def barcode_assign():
             (value, code_type, db.now_iso(), product_id, user_id),
         )
         conn.commit()
-    except db.sqlite3.IntegrityError:
+    except db.IntegrityError:
         conn.close()
         return jsonify({"error": "That code is already assigned to another item."}), 400
     conn.close()
@@ -1130,7 +1132,7 @@ def ai_restock():
     user_id = get_current_user_id()
     conn = db.get_connection()
     settings = get_settings(conn, user_id)
-    result = ai_engine.generate_purchase_orders(conn, settings)
+    result = ai_engine.generate_purchase_orders(conn, settings, user_id=get_current_user_id())
     conn.close()
     return jsonify(result)
 
@@ -1288,4 +1290,3 @@ if __name__ == "__main__":
         else:
             ssl_ctx = "adhoc"  # fallback
     app.run(debug=False, host="0.0.0.0", port=port, ssl_context=ssl_ctx)
-

@@ -25,6 +25,6 @@ If you want to customize the app locally or build manually:
 2. Select **Open an Existing Project** and choose the `android_app` folder.
 3. To change the target URL loaded by the app, edit `android_app/app/src/main/res/values/strings.xml`:
    ```xml
-   <string name="default_web_url">https://your-app-name.onrender.com</string>
+   <string name="default_web_url">https://your-project.vercel.app</string>
    ```
 4. Click **Build** $\rightarrow$ **Build Bundle(s) / APK(s)** $\rightarrow$ **Build APK(s)**.

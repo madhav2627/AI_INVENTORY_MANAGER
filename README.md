@@ -79,6 +79,24 @@ Everything is stored in a single local SQLite file at `data/store.db`,
 created automatically the first time you run the app. Back it up by
 copying that one file.
 
+## Deploying on Vercel
+
+Vercel functions do not retain files written to disk, so SQLite must only be
+used for local/offline runs. Before deploying, create a managed PostgreSQL
+database (Vercel Postgres, Neon, Supabase, or another PostgreSQL provider) and
+set these **Production**, **Preview**, and **Development** environment variables
+in the Vercel project:
+
+```
+DATABASE_URL=postgresql://...
+SECRET_KEY=<a long random value>
+```
+
+`POSTGRES_URL` is also supported when using Vercel Postgres. The application
+creates its tables automatically. Keep `SECRET_KEY` unchanged after deployment:
+changing it invalidates existing browser sessions. Do not set either value in a
+`NEXT_PUBLIC_` variable.
+
 ## Project structure
 
 ```

@@ -6,17 +6,29 @@ next to the application and is created automatically on first run.
 import sqlite3
 import os
 import json
+import re
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# On Vercel, serverless filesystem is read-only. We must write SQLite to /tmp.
-if os.environ.get("VERCEL"):
-    DB_PATH = "/tmp/store.db"
-    # Ensure parent dir exists
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+# SQLite remains the offline/local option.  Vercel deployments must use a
+# managed PostgreSQL database because /tmp is discarded between function runs.
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL")
+USING_POSTGRES = bool(DATABASE_URL)
+DB_PATH = None if USING_POSTGRES else os.path.join(BASE_DIR, "data", "store.db")
+
+if os.environ.get("VERCEL") and not USING_POSTGRES:
+    raise RuntimeError(
+        "Vercel needs a persistent PostgreSQL database. Ensure the Neon database integration "
+        "is connected so DATABASE_URL or POSTGRES_URL is present in project environment variables."
+    )
+
+if USING_POSTGRES:
+    import psycopg
+    from psycopg.rows import dict_row
+    IntegrityError = (sqlite3.IntegrityError, psycopg.IntegrityError)
 else:
-    DB_PATH = os.path.join(BASE_DIR, "data", "store.db")
+    IntegrityError = sqlite3.IntegrityError
 
 
 # New columns to add to the products table (for migration on existing DBs)
@@ -221,7 +233,106 @@ DEFAULT_SETTINGS = {
 }
 
 
+def _postgres_sql(sql):
+    """Translate the small SQLite dialect surface used by this application."""
+    sql = sql.replace("INSERT OR IGNORE INTO users", "INSERT INTO users")
+    if "INSERT INTO users" in sql and "ON CONFLICT" not in sql and "INSERT OR IGNORE" not in sql:
+        # Only restore_users_from_json relies on a duplicate being harmless.
+        if "password_hash, full_name, role, created_at" in sql and "VALUES" in sql:
+            sql += " ON CONFLICT (username) DO NOTHING"
+    sql = sql.replace(
+        "INSERT OR IGNORE INTO settings (key, value, user_id)",
+        "INSERT INTO settings (key, value, user_id)",
+    )
+    if "INSERT INTO settings (key, value, user_id)" in sql and "ON CONFLICT" not in sql:
+        if "VALUES" in sql:
+            sql += " ON CONFLICT (key, user_id) DO NOTHING"
+    if "INSERT OR REPLACE INTO settings" in sql:
+        sql = sql.replace("INSERT OR REPLACE INTO settings", "INSERT INTO settings")
+        sql += " ON CONFLICT (key, user_id) DO UPDATE SET value = EXCLUDED.value"
+    if "INSERT OR REPLACE INTO expiry_alerts" in sql:
+        sql = sql.replace("INSERT OR REPLACE INTO expiry_alerts", "INSERT INTO expiry_alerts")
+        sql += (" ON CONFLICT (user_id, product_id) DO UPDATE SET "
+                "expiry_date = EXCLUDED.expiry_date, status = EXCLUDED.status, "
+                "notified = EXCLUDED.notified, created_at = EXCLUDED.created_at")
+
+    # The app stores timestamps as ISO text. PostgreSQL can cast them to dates,
+    # but SQLite's relative-date syntax needs translating.
+    sql = sql.replace("date('now', 'localtime')", "CURRENT_DATE")
+    sql = sql.replace("date('now','localtime')", "CURRENT_DATE")
+    sql = re.sub(
+        r"date\('now',\s*'localtime',\s*'-(\d+) days'\)",
+        lambda m: f"CURRENT_DATE - INTERVAL '{m.group(1)} days'",
+        sql,
+    )
+    sql = re.sub(
+        r"date\('now',\s*'localtime',\s*'-\{([^}]+)\} days'\)",
+        r"CURRENT_DATE - INTERVAL '\1 days'",
+        sql,
+    )
+    sql = re.sub(r"date\(([^)]+)\)", r"CAST(\1 AS DATE)", sql)
+    return sql.replace("?", "%s")
+
+
+class PostgresCursor:
+    """sqlite3-like cursor used to keep the route layer database-agnostic."""
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.lastrowid = None
+
+    def execute(self, sql, params=None):
+        statement = _postgres_sql(sql)
+        is_insert = statement.lstrip().upper().startswith("INSERT INTO")
+        table_match = re.match(r"\s*INSERT\s+INTO\s+([a-z_]+)", statement, re.IGNORECASE)
+        has_numeric_id = bool(table_match and table_match.group(1).lower() != "settings")
+        if is_insert and has_numeric_id and "RETURNING" not in statement.upper():
+            statement += " RETURNING id"
+        self._cursor.execute(statement, params or ())
+        if is_insert and has_numeric_id:
+            row = self._cursor.fetchone()
+            self.lastrowid = row["id"] if row else None
+        return self
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+class PostgresConnection:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, sql, params=None):
+        cursor = PostgresCursor(self._connection.cursor())
+        return cursor.execute(sql, params)
+
+    def cursor(self):
+        return PostgresCursor(self._connection.cursor())
+
+    def executescript(self, script):
+        with self._connection.cursor() as cursor:
+            # PostgreSQL drivers execute one statement at a time.  The schema
+            # contains no semicolons inside literals, so this keeps the same
+            # convenient SQLite executescript behaviour.
+            for statement in script.split(";"):
+                if statement.strip():
+                    cursor.execute(statement)
+
+    def commit(self):
+        self._connection.commit()
+
+    def close(self):
+        self._connection.close()
+
+
 def get_connection():
+    if USING_POSTGRES:
+        return PostgresConnection(psycopg.connect(DATABASE_URL, row_factory=dict_row))
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -236,6 +347,14 @@ TABLES_WITH_USER_ID = [
 
 def _migrate_user_id_columns(conn):
     """Safely add user_id column to existing tables for multi-tenant data isolation."""
+    if USING_POSTGRES:
+        for table_name in TABLES_WITH_USER_ID:
+            conn.execute(
+                "ALTER TABLE " + table_name + " ADD COLUMN IF NOT EXISTS user_id INTEGER NOT NULL DEFAULT 1"
+            )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_products_user ON products(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_user ON transactions(user_id)")
+        return
     for table_name in TABLES_WITH_USER_ID:
         try:
             existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
@@ -252,6 +371,10 @@ def _migrate_user_id_columns(conn):
 
 def _migrate_products_columns(conn):
     """Safely add new columns to products table if they don't exist yet."""
+    if USING_POSTGRES:
+        for col_name, col_def in PRODUCTS_NEW_COLUMNS:
+            conn.execute(f"ALTER TABLE products ADD COLUMN IF NOT EXISTS {col_name} {col_def}")
+        return
     existing = {row[1] for row in conn.execute("PRAGMA table_info(products)").fetchall()}
     for col_name, col_def in PRODUCTS_NEW_COLUMNS:
         if col_name not in existing:
@@ -336,9 +459,17 @@ def create_user(conn, username, password, full_name="", role="admin"):
 def init_db():
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
     conn = get_connection()
-    conn.executescript(SCHEMA)
+    schema = SCHEMA
+    if USING_POSTGRES:
+        schema = schema.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
+    conn.executescript(schema)
     _migrate_user_id_columns(conn)
     _migrate_products_columns(conn)
+    if USING_POSTGRES:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_expiry_alerts_user_product "
+            "ON expiry_alerts(user_id, product_id)"
+        )
     restore_users_from_json(conn)
     for key, value in DEFAULT_SETTINGS.items():
         conn.execute(
@@ -347,6 +478,17 @@ def init_db():
     conn.commit()
     seed_default_admin(conn)
     conn.close()
+
+
+_initialized = False
+
+
+def ensure_initialized():
+    """Initialise once per process; schema creation is idempotent for cold starts."""
+    global _initialized
+    if not _initialized:
+        init_db()
+        _initialized = True
 
 
 def now_iso():

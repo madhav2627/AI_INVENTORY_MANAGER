@@ -1,5 +1,5 @@
 """
-Multi-Source High-Precision Barcode Lookup Engine (v6.1 -- Robust Retry + Reliable Logging + Render Persistence)
+Multi-Source High-Precision Barcode Lookup Engine (v6.1 -- Robust Retry + Reliable Logging + Persistent Storage)
 ------------------------------------------------------------------------------------------------------------------
 Queries global AND Indian barcode databases concurrently for maximum hit rate:
   1. Open Food Facts       (Food, grocery)

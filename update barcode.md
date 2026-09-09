@@ -169,12 +169,12 @@ logger.warning(...)
 while keeping the application running.
 
 --------------------------------------------------
-5. HANDLE RENDER PERSISTENCE CORRECTLY
+5. HANDLE CLOUD PERSISTENCE CORRECTLY
 --------------------------------------------------
 
-The application is deployed on Render.
+The application is deployed on a serverless cloud platform.
 
-Investigate whether the current SQLite barcode cache can disappear because of Render's filesystem behavior/restarts/redeployments.
+Investigate whether the current SQLite barcode cache can disappear because of serverless filesystem behavior, restarts, or redeployments.
 
 Do not rely only on temporary in-memory caching.
 
@@ -418,7 +418,7 @@ After making the changes:
 1. Tell me exactly which files you modified.
 2. Explain the root cause you found.
 3. Explain how the new retry/cache/failure handling works.
-4. Tell me if any Render configuration needs to be changed.
+4. Tell me if any deployment configuration needs to be changed.
 5. List any new environment variables or dependencies.
 6. Make sure existing Add Product, Billing, Barcode Generator and Fast Scanner functionality still works.
 7. Check for syntax/runtime errors before finishing.
