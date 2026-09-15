@@ -21,7 +21,7 @@ def load_daily_sales(conn):
         JOIN transactions t ON t.id = ti.transaction_id
         JOIN products p ON p.id = ti.product_id
         WHERE ti.product_id IS NOT NULL
-        GROUP BY ti.product_id, date(t.created_at)
+        GROUP BY ti.product_id, p.category, p.unit_price, p.stock_qty, p.reorder_level, date(t.created_at)
         ORDER BY ti.product_id, sale_date
     """
     df = pd.read_sql_query(query, conn)

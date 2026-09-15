@@ -165,7 +165,7 @@ def detect_anomalies(conn):
         JOIN products p ON p.id = ti.product_id
         WHERE ti.product_id IS NOT NULL
           AND date(t.created_at) >= date('now', 'localtime', '-60 days')
-        GROUP BY ti.product_id, date(t.created_at)
+        GROUP BY ti.product_id, p.name, date(t.created_at)
     """, conn)
 
     if not sales_df.empty:

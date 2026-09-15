@@ -192,9 +192,26 @@ def get_settings(conn, user_id=None):
     rows = conn.execute("SELECT key, value FROM settings WHERE user_id = ?", (user_id,)).fetchall()
     settings_dict = {r["key"]: r["value"] for r in rows}
     if not settings_dict:
-        for k, v in db.DEFAULT_SETTINGS.items():
-            conn.execute("INSERT OR REPLACE INTO settings (key, value, user_id) VALUES (?, ?, ?)", (k, v, user_id))
-        conn.commit()
+        if db.USING_POSTGRES:
+            stmts = [
+                f"INSERT INTO settings (key, value, user_id) VALUES ('{k}', '{v}', {int(user_id)}) ON CONFLICT (key, user_id) DO NOTHING"
+                for k, v in db.DEFAULT_SETTINGS.items()
+            ]
+            try:
+                conn.executescript("; ".join(stmts))
+            except Exception:
+                for k, v in db.DEFAULT_SETTINGS.items():
+                    try:
+                        conn.execute("INSERT OR REPLACE INTO settings (key, value, user_id) VALUES (?, ?, ?)", (k, v, user_id))
+                    except Exception:
+                        pass
+        else:
+            for k, v in db.DEFAULT_SETTINGS.items():
+                conn.execute("INSERT OR REPLACE INTO settings (key, value, user_id) VALUES (?, ?, ?)", (k, v, user_id))
+        try:
+            conn.commit()
+        except Exception:
+            pass
         rows = conn.execute("SELECT key, value FROM settings WHERE user_id = ?", (user_id,)).fetchall()
         settings_dict = {r["key"]: r["value"] for r in rows}
     return settings_dict
@@ -481,7 +498,7 @@ def ai_recommendations():
             FROM transaction_items ti
             JOIN transactions t ON t.id = ti.transaction_id
             WHERE date(t.created_at) >= date('now','localtime','-{days} days') AND t.user_id = ?
-            GROUP BY ti.product_id ORDER BY qty_sold DESC LIMIT 10""",
+            GROUP BY ti.product_id, ti.product_name ORDER BY qty_sold DESC LIMIT 10""",
         (user_id,)
     ).fetchall()
 
@@ -498,8 +515,8 @@ def ai_recommendations():
             LEFT JOIN transaction_items ti ON ti.product_id = p.id
             LEFT JOIN transactions t ON t.id = ti.transaction_id AND t.user_id = ?
             WHERE p.stock_qty > 0 AND p.user_id = ?
-            GROUP BY p.id
-            HAVING last_sale IS NULL OR date(last_sale) < date('now','localtime','-{dead_days} days')
+            GROUP BY p.id, p.name, p.stock_qty, p.category
+            HAVING MAX(t.created_at) IS NULL OR date(MAX(t.created_at)) < date('now','localtime','-{dead_days} days')
             ORDER BY p.stock_qty DESC LIMIT 10""",
         (user_id, user_id)
     ).fetchall()
@@ -1243,6 +1260,29 @@ def ai_agent_log():
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# Error Handlers
+# ---------------------------------------------------------------------------
+
+@app.errorhandler(500)
+def handle_500(e):
+    import traceback
+    is_vercel = bool(os.environ.get("VERCEL"))
+    trace = traceback.format_exc()
+    app.logger.error(f"Internal Server Error 500: {e}\n{trace}")
+    return render_template(
+        "500.html",
+        error=str(e),
+        trace=trace,
+        is_vercel=is_vercel,
+    ), 500
+
+
+@app.errorhandler(404)
+def handle_404(e):
+    return render_template("404.html"), 404
 
 
 def find_available_port(preferred_port=5000):

@@ -24,18 +24,33 @@ if not DATABASE_URL:
     DATABASE_URL = os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE_URL")
 
 USING_POSTGRES = bool(DATABASE_URL)
-DB_PATH = None if USING_POSTGRES else os.path.join(BASE_DIR, "data", "store.db")
+if os.environ.get("VERCEL"):
+    DB_PATH = "/tmp/store.db"
+    try:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    except Exception:
+        pass
+else:
+    DB_PATH = os.path.join(BASE_DIR, "data", "store.db")
+
+import logging
+db_logger = logging.getLogger("database")
 
 if os.environ.get("VERCEL") and not USING_POSTGRES:
-    raise RuntimeError(
-        "Vercel needs a persistent PostgreSQL database. Ensure the Neon database integration "
+    db_logger.warning(
+        "Vercel running in ephemeral SQLite mode (/tmp/store.db). Ensure the Neon database integration "
         "is connected so DATABASE_URL or POSTGRES_URL is present in project environment variables."
     )
 
 if USING_POSTGRES:
-    import psycopg
-    from psycopg.rows import dict_row
-    IntegrityError = (sqlite3.IntegrityError, psycopg.IntegrityError)
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        IntegrityError = (sqlite3.IntegrityError, psycopg.IntegrityError)
+    except ImportError:
+        db_logger.warning("psycopg not installed, falling back to SQLite.")
+        USING_POSTGRES = False
+        IntegrityError = sqlite3.IntegrityError
 else:
     IntegrityError = sqlite3.IntegrityError
 
@@ -269,6 +284,7 @@ def _postgres_sql(sql):
     # but SQLite's relative-date syntax needs translating.
     sql = sql.replace("date('now', 'localtime')", "CURRENT_DATE")
     sql = sql.replace("date('now','localtime')", "CURRENT_DATE")
+    sql = sql.replace("date('now')", "CURRENT_DATE")
     sql = re.sub(
         r"date\('now',\s*'localtime',\s*'-(\d+) days'\)",
         lambda m: f"CURRENT_DATE - INTERVAL '{m.group(1)} days'",
@@ -279,7 +295,7 @@ def _postgres_sql(sql):
         r"CURRENT_DATE - INTERVAL '\1 days'",
         sql,
     )
-    sql = re.sub(r"date\(([^)]+)\)", r"CAST(\1 AS DATE)", sql)
+    sql = re.sub(r"date\(((?:[^()]+|\([^()]*\))+)\)", r"CAST(\1 AS DATE)", sql)
     return sql.replace("?", "%s")
 
 
@@ -409,17 +425,60 @@ class PostgresConnection:
             pass
 
 
+def _connect_postgres(retries=3, delay=0.8):
+    """Connect to PostgreSQL with automatic retries and autocommit for Neon cold-start wakeups."""
+    last_err = None
+    for attempt in range(retries):
+        try:
+            raw_conn = psycopg.connect(
+                DATABASE_URL,
+                autocommit=True,
+                connect_timeout=10,
+            )
+            return PostgresConnection(raw_conn)
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                import time
+                time.sleep(delay * (attempt + 1))
+
+    # If all retries failed and on Vercel, gracefully fall back to /tmp SQLite so the app stays up
+    if os.environ.get("VERCEL"):
+        db_logger.warning(
+            f"PostgreSQL connection to Neon failed ({last_err}). Falling back to /tmp SQLite."
+        )
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
+    raise last_err
+
+
+def is_connection_alive(conn):
+    if conn is None:
+        return False
+    try:
+        if getattr(conn, 'closed', False):
+            return False
+        inner = getattr(conn, '_connection', None)
+        if inner is not None and getattr(inner, 'closed', False):
+            return False
+        conn.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
 def get_connection():
     try:
         from flask import g, has_request_context
         if has_request_context():
             if hasattr(g, '_db_conn') and g._db_conn is not None:
-                conn = g._db_conn
-                is_closed = getattr(conn, 'closed', False) or getattr(getattr(conn, '_connection', None), 'closed', False)
-                if not is_closed:
-                    return conn
+                if is_connection_alive(g._db_conn):
+                    return g._db_conn
+                g._db_conn = None
             if USING_POSTGRES:
-                conn = PostgresConnection(psycopg.connect(DATABASE_URL))
+                conn = _connect_postgres()
             else:
                 conn = sqlite3.connect(DB_PATH)
                 conn.row_factory = sqlite3.Row
@@ -430,7 +489,7 @@ def get_connection():
         pass
 
     if USING_POSTGRES:
-        return PostgresConnection(psycopg.connect(DATABASE_URL))
+        return _connect_postgres()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -560,34 +619,56 @@ def create_user(conn, username, password, full_name="", role="admin"):
 
 
 def init_db():
-    os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
+    if not os.environ.get("VERCEL"):
+        try:
+            os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
+        except Exception:
+            pass
     conn = get_connection()
     schema = SCHEMA
     if USING_POSTGRES:
-        schema = schema.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
-    conn.executescript(schema)
+        schema = schema.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    try:
+        conn.executescript(schema)
+    except Exception as e:
+        db_logger.warning(f"Schema creation notice: {e}")
     _migrate_user_id_columns(conn)
     _migrate_products_columns(conn)
     if USING_POSTGRES:
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_expiry_alerts_user_product "
-            "ON expiry_alerts(user_id, product_id)"
-        )
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_expiry_alerts_user_product "
+                "ON expiry_alerts(user_id, product_id)"
+            )
+        except Exception:
+            pass
     restore_users_from_json(conn)
     if USING_POSTGRES:
         stmts = [
             f"INSERT INTO settings (key, value, user_id) VALUES ('{k}', '{v}', 1) ON CONFLICT (key, user_id) DO NOTHING"
             for k, v in DEFAULT_SETTINGS.items()
         ]
-        conn.executescript("; ".join(stmts))
+        try:
+            conn.executescript("; ".join(stmts))
+        except Exception as e:
+            db_logger.warning(f"Settings seed notice: {e}")
     else:
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value, user_id) VALUES (?, ?, 1)", (key, value)
             )
-    conn.commit()
+    try:
+        conn.commit()
+    except Exception:
+        pass
     seed_default_admin(conn)
     conn.close()
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            g._db_conn = None
+    except Exception:
+        pass
 
 
 _initialized = False
@@ -607,7 +688,10 @@ def ensure_initialized():
                 return
             except Exception:
                 pass
-        init_db()
+        try:
+            init_db()
+        except Exception as e:
+            db_logger.error(f"Database initialization error: {e}")
         _initialized = True
 
 

@@ -43,7 +43,7 @@ def _heuristic_demand(conn, user_id=None):
             LEFT JOIN transaction_items ti ON ti.product_id = p.id
             LEFT JOIN transactions t ON t.id = ti.transaction_id AND t.user_id = ?
             WHERE p.user_id = ?
-            GROUP BY p.id
+            GROUP BY p.id, p.name, p.stock_qty, p.reorder_level
         """
         df = pd.read_sql_query(query, conn, params=(user_id, user_id))
     else:
@@ -55,7 +55,7 @@ def _heuristic_demand(conn, user_id=None):
             FROM products p
             LEFT JOIN transaction_items ti ON ti.product_id = p.id
             LEFT JOIN transactions t ON t.id = ti.transaction_id
-            GROUP BY p.id
+            GROUP BY p.id, p.name, p.stock_qty, p.reorder_level
         """
         df = pd.read_sql_query(query, conn)
     results = {}
