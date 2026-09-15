@@ -40,15 +40,22 @@ app.config.update(
 # Bootstrap & Authentication Middleware
 # ---------------------------------------------------------------------------
 
-OPEN_ENDPOINTS = {'login', 'register', 'static'}
+OPEN_ENDPOINTS = {'login', 'register', 'static', 'favicon'}
+
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204
 
 @app.before_request
 def ensure_auth():
-    # Bypass all database operations for static assets
-    if request.path.startswith('/static/'):
+    # Bypass all database operations for static assets and favicon
+    if request.path.startswith('/static/') or request.path == '/favicon.ico':
         return None
 
-    db.ensure_initialized()
+    try:
+        db.ensure_initialized()
+    except Exception as e:
+        app.logger.warning(f"ensure_initialized warning: {e}")
         
     endpoint = request.endpoint or ''
     if endpoint in OPEN_ENDPOINTS:
@@ -58,8 +65,14 @@ def ensure_auth():
     if not user_id:
         return redirect(url_for("login"))
         
-    conn = db.get_connection()
-    user = db.get_user_by_id(conn, user_id)
+    try:
+        conn = db.get_connection()
+        user = db.get_user_by_id(conn, user_id)
+    except Exception as e:
+        app.logger.warning(f"Error fetching user for session {user_id}: {e}")
+        session.clear()
+        return redirect(url_for("login"))
+
     if not user:
         session.clear()
         return redirect(url_for("login"))

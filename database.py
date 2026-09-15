@@ -601,7 +601,9 @@ def get_user_by_username(conn, username):
 
 
 def get_user_by_id(conn, user_id):
-    return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not user_id:
+        return None
+    return conn.execute("SELECT * FROM users WHERE CAST(id AS TEXT) = ?", (str(user_id),)).fetchone()
 
 
 def create_user(conn, username, password, full_name="", role="admin"):
